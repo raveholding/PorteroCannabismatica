@@ -2664,7 +2664,7 @@ function paintBrand(){
   document.title='Portero Digital · '+S.brand;
 }
 let lastEn=null;
-function tick(){const d=new Date();$('#clk').textContent=pad(d.getHours())+':'+pad(d.getMinutes());const o=isEnabled();$('#stDot').className='dot '+(o?'on':'off');$('#stTx').textContent=o?'Habilitado':'Fuera de servicio';
+function tick(){startCtl();const d=new Date();$('#clk').textContent=pad(d.getHours())+':'+pad(d.getMinutes());const o=isEnabled();$('#stDot').className='dot '+(o?'on':'off');$('#stTx').textContent=o?'Habilitado':'Fuera de servicio';
   if(lastEn!==null&&o!==lastEn&&$('#v_home'))build();lastEn=o}
 setInterval(tick,5000);
 
@@ -2691,12 +2691,32 @@ const NQ=()=>LS.get('cnb_q',[]),setNQ=q=>LS.set('cnb_q',q.slice(-30));
 const lastN={};
 async function sendNtfy(o){
   const N=S.notif.ntfy,base=String(N.server||'https://ntfy.sh').replace(/\/+$/,'');
-  try{const r=await fetch(base+'/',{method:'POST',body:JSON.stringify({topic:N.topic,title:o.title,message:o.body,priority:o.prio||3})});if(r.ok)return true}catch(_){}
+  const pay={topic:N.topic,title:o.title,message:o.body,priority:o.prio||3};
+  if(o.ring)pay.actions=Object.entries(BELL_BTN).map(([code,label])=>({action:'http',label,url:base+'/'+encodeURIComponent(N.topic+'-c'),method:'POST',body:JSON.stringify({type:'reply',id:o.ring,code}),clear:true}));
+  try{const r=await fetch(base+'/',{method:'POST',body:JSON.stringify(pay)});if(r.ok)return true}catch(_){}
   try{const r=await fetch(base+'/'+encodeURIComponent(N.topic),{method:'POST',body:o.title+'\n'+o.body});return r.ok}catch(_){return false}
 }
 async function sendWA(r,o){
-  const url='https://api.callmebot.com/whatsapp.php?phone='+encodeURIComponent(String(r.phone).replace(/\D/g,''))+'&text='+encodeURIComponent(o.title+'\n'+o.body)+'&apikey='+encodeURIComponent(r.key);
+  const url='https://api.callmebot.com/whatsapp.php?phone='+encodeURIComponent('+'+String(r.phone).replace(/\D/g,''))+'&text='+encodeURIComponent(o.title+'\n'+String(o.body).replace(' Respondé con los botones.',''))+'&apikey='+encodeURIComponent(r.key);
   try{await fetch(url,{mode:'no-cors'});return true}catch(_){return false}
+}
+/* respuestas del personal desde la notificación: se ven y se escuchan en la pantalla del timbre */
+const BELL_BTN={voy:'Ya voy',momento:'Un momento',nopuede:'No podemos'};
+const BELL_REPLIES={voy:'¡Ya vamos! Aguardá un momento.',momento:'Estamos atendiendo: en unos minutos te recibimos.',nopuede:'Ahora no podemos atenderte. Disculpá las molestias.'};
+let ctlES=null,ctlKey='';const ringIds=new Set();
+function startCtl(){
+  const N=S.notif.ntfy,base=String(N.server||'https://ntfy.sh').replace(/\/+$/,''),key=N.on&&N.topic?base+'|'+N.topic:'';
+  if(key===ctlKey)return;ctlKey=key;if(ctlES){ctlES.close();ctlES=null}
+  if(!key||!window.EventSource)return;
+  ctlES=new EventSource(base+'/'+encodeURIComponent(N.topic+'-c')+'/sse?since=30s');
+  ctlES.onmessage=ev=>{try{const m=JSON.parse(ev.data);if(m.event&&m.event!=='message')return;const p=JSON.parse(m.message);if(p&&p.type==='reply')bellReply(p)}catch(_){}};
+}
+function bellReply(p){
+  const txt=BELL_REPLIES[p.code];if(!txt||!curArea||!ringIds.has(p.id)||VIEW!=='bell')return;
+  ringIds.clear();clearTimeout(bellT);
+  const st=$('#cstate'),sb=$('#csub'),ac=$('#cacts');if(st)st.textContent=txt;if(sb)sb.textContent='Respuesta del personal · '+hhmm();if(ac&&p.code!=='nopuede')ac.innerHTML='';
+  sfx.ok();say(txt);audit('BELL_REPLY',curArea.name+' · '+txt);
+  bellT=setTimeout(()=>{stopBell();go('home')},30000);
 }
 async function runJob(j){if(j.ch==='ntfy')return sendNtfy(j.o);const r=S.notif.recips.find(x=>x.id===j.ch.slice(3));return r?sendWA(r,j.o):true}
 async function notify(kind,o){
@@ -2984,14 +3004,15 @@ function deskBar(){
 /* ====================== timbre ====================== */
 let bellT=null,curArea=null;
 const waBtn=a=>`<a class="btn m" target="_blank" rel="noopener" href="https://wa.me/${String(a.wa).replace(/\D/g,'')}?text=${encodeURIComponent('Hola, estoy en la puerta de '+S.brand+' y busco '+a.name+'.')}">Avisar por WhatsApp</a>`;
-function stopBell(){clearTimeout(bellT);bellT=null;curArea=null}
+function stopBell(){clearTimeout(bellT);bellT=null;curArea=null;ringIds.clear()}
 function ringArea(id){
   const a=AREAS.find(x=>x.id===id);if(!a)return;
   if(!isEnabled()){toast('Portero fuera de servicio');audit('OFFHOURS_DENIED','Timbre fuera de servicio');return}
   let who='';
   if(S.mode==='corp'){const v=$('#vname');who=v?v.value.trim():'Visita (reintento/voz)';if(v&&who.length<3){toast('Escribí tu nombre para continuar');v.focus();return}}
-  curArea=a;audit('BELL','Timbre → '+a.name+(who?' · visita: '+who:''),who);webhook({event:'BELL',brand:S.brand,area:a.name,visitor:who,ts:now()});
-  notify('bell',{title:'🔔 Timbre · '+a.name,body:(who?who+' está':'Hay alguien')+' en la puerta de '+S.brand+' ('+hhmm()+').',prio:4,area:a.id}).then(n=>{if(n>0&&VIEW==='bell'&&curArea===a){const sb=$('#csub');if(sb)sb.textContent='Ya avisamos al personal por el celular. Aguardá a que te atiendan.'}});
+  curArea=a;const rid=uid()+now().toString(36);ringIds.add(rid);
+  audit('BELL','Timbre → '+a.name+(who?' · visita: '+who:''),who);webhook({event:'BELL',brand:S.brand,area:a.name,visitor:who,ts:now()});
+  notify('bell',{title:'🔔 Timbre · '+a.name,body:(who?who+' está':'Hay alguien')+' en la puerta de '+S.brand+' ('+hhmm()+'). Respondé con los botones.',prio:4,area:a.id,ring:rid}).then(n=>{if(n>0&&VIEW==='bell'&&curArea===a){const sb=$('#csub');if(sb)sb.textContent='Ya avisamos al personal por el celular. Aguardá a que te atiendan.'}});
   chime(a.chime||S.chime);say('Llamando a '+a.name+'. Aguardá un momento.');
   go('bell',id);
   bellT=setTimeout(()=>bellState('none'),45000);
@@ -3250,7 +3271,7 @@ const AT={
   <div class="card"><p class="mut" style="margin:0">Al presionar Emergencia hay 3 segundos para cancelar y luego se dispara <b style="color:var(--tx)">tel:${esc(S.emNum||'911')}</b>. Sin cámaras no se capturan imágenes: el evento queda en el log con fecha y hora.</p></div>`},
  avisos(){const N=S.notif;return `<h3>Avisos al celular</h3><p class="sub">El portero avisa a los celulares que elijan los dueños: timbre, emergencia, alerta silenciosa y más. El dispositivo del portero necesita internet.</p>
   <div class="card"><b>1 · Notificación push (recomendado)</b>
-   <p class="mut">Gratis y sin cuentas, con la app <b style="color:var(--tx)">ntfy</b> (Android e iOS). Cada persona instala la app y se suscribe al tema de abajo. El tema funciona como una contraseña: no lo compartan fuera del equipo.</p>
+   <p class="mut">Gratis y sin cuentas, con la app <b style="color:var(--tx)">ntfy</b> (Android e iOS). El aviso del timbre trae botones <b style="color:var(--tx)">Ya voy · Un momento · No podemos</b>: la respuesta se muestra y se escucha en la pantalla del portero. Cada persona instala la app y se suscribe al tema de abajo. El tema funciona como una contraseña: no lo compartan fuera del equipo.</p>
    ${sw('Activar notificaciones push','notif.ntfy.on')}
    <div class="grid2">${fld('Servidor','notif.ntfy.server','url')}${fld('Tema (contraseña del canal)','notif.ntfy.topic','text','autocomplete="off"')}</div>
    <div class="row" style="margin-top:10px"><button class="btn sm" data-act="ntfygen">Generar tema seguro</button><button class="btn sm y" data-act="ntfytest">Enviar prueba</button><button class="btn sm" data-act="ntfycopy">Copiar tema</button></div>

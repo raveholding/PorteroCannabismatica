@@ -24,7 +24,7 @@ Los datos se guardan en el propio dispositivo (`localStorage`). Al cambiar de di
 - **Sin cámaras ni biometría.** No captura imágenes de nadie; solo guarda el registro de eventos del dispositivo.
 - **Timbre por áreas** (Recepción, Consultas, Asesoría y trámites, Talleres, Cuota social): suena el timbre en el dispositivo, queda registrado, avisa a los celulares configurados (ver Avisos), permite que la visita avise por WhatsApp a cada área y, si se configura un webhook, envía el evento `BELL` a un sistema externo.
 - **Avisos al celular** (panel → Avisos al celular), a elección de los dueños:
-  - **Notificación push con [ntfy](https://ntfy.sh)** (recomendado): gratis y sin cuentas. Cada persona instala la app ntfy y se suscribe al tema que genera el panel (el tema funciona como contraseña; el panel muestra un QR).
+  - **Notificación push con [ntfy](https://ntfy.sh)** (recomendado): gratis y sin cuentas. Cada persona instala la app ntfy y se suscribe al tema que genera el panel (el tema funciona como contraseña; el panel muestra un QR). El aviso del timbre trae botones **Ya voy · Un momento · No podemos**: la respuesta se muestra y se escucha en la pantalla del portero.
   - **WhatsApp automático con CallMeBot** (opcional): cada persona lo activa una vez desde su WhatsApp y carga su apikey en el panel; se puede limitar por área. Es un servicio gratuito no oficial y de uso personal.
   - Se pueden elegir los eventos: timbre, emergencia, alerta silenciosa (PIN de coacción), bloqueo por intentos fallidos e intentos fuera de horario. Si no hay internet, los avisos quedan en cola y se reintentan durante 15 minutos.
 - **Ingreso por PIN** (con bloqueo por intentos fallidos), **pases de visita temporales** (código y QR), **tarjeta NFC** (Web NFC en Android) y lector QR USB/Bluetooth tipo teclado.
@@ -46,6 +46,12 @@ Para personal autorizado (roles *Personal* y *Profesional*) registrado previamen
 - **Rostro**: la cámara se enciende solo cuando alguien toca "Reconocimiento facial". No se guardan fotos ni videos: solo una plantilla numérica de 5 muestras por persona, guardada en el dispositivo. El texto de privacidad de la pantalla principal cambia a "Cámara solo para personal registrado · no se guardan fotos" cuando está activo.
   - Usa [face-api](https://github.com/vladmandic/face-api) (licencia MIT) y sus modelos, incluidos en `face/` (unos 8 MB), cargados solo al usarlo. Requiere servir `index.html` junto con la carpeta `face/` por HTTPS o `localhost`.
   - Exige un **parpadeo** para frenar fotos y ajusta la exigencia de coincidencia (0,5 por defecto; más bajo es más estricto). Es menos seguro que la huella: un video de la persona podría engañarlo. No conviene usarlo como única barrera si hay riesgo real.
+
+## Pruebas
+
+```bash
+python3 tests/e2e.py    # 22 pruebas en navegador: panel, personas, PIN, coacción, bloqueo, pases, timbre con push y WhatsApp, respuesta desde el celular, horarios y emergencia
+```
 
 ## Límites de esta versión
 
