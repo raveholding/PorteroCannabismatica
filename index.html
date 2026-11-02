@@ -2561,11 +2561,13 @@ const DEF={
   pinLen:4, maxFails:5, lockSec:30, idleSec:45, relayMs:5000, relayUrl:'', relayToken:'', webhook:'', clientUrl:'',
   emNum:'911', trustName:'', trustNum:'',
   voice:{on:true,wake:'portero',wakeReq:false,uri:'',rate:1,tts:true},
-  chime:'campana', sound:true
+  chime:'campana', sound:true,
+  notif:{ntfy:{on:false,server:'https://ntfy.sh',topic:''},wa:{on:false},recips:[],ev:{bell:true,sos:true,duress:true,lock:true,off:false}}
 };
 if(LS.get('cnb_ver',0)!==2){['cnb_set','cnb_sec','cnb_users','cnb_areas','cnb_pass','cnb_log','cnb_fail'].forEach(k=>{try{localStorage.removeItem(k)}catch(_){}});LS.set('cnb_ver',2)}
 let S=Object.assign({},DEF,LS.get('cnb_set',{}));
 S.sched=JSON.parse(JSON.stringify(Object.assign({},DEF.sched,S.sched||{}))); S.voice=Object.assign({},DEF.voice,S.voice||{});
+S.notif=JSON.parse(JSON.stringify(Object.assign({},DEF.notif,S.notif||{})));S.notif.ntfy=Object.assign({},DEF.notif.ntfy,S.notif.ntfy);S.notif.wa=Object.assign({},DEF.notif.wa,S.notif.wa);S.notif.ev=Object.assign({},DEF.notif.ev,S.notif.ev);S.notif.recips=S.notif.recips||[];
 let SEC=LS.get('cnb_sec',null);   // {admin,duress}
 let USERS=LS.get('cnb_users',null);
 let AREAS=LS.get('cnb_areas',null);
@@ -2574,7 +2576,8 @@ let LOG=LS.get('cnb_log',[]);
 let FAIL=LS.get('cnb_fail',{n:0,until:0});
 const save=()=>{LS.set('cnb_set',S);LS.set('cnb_users',USERS);LS.set('cnb_areas',AREAS);LS.set('cnb_pass',PASSES);LS.set('cnb_sec',SEC)};
 const saveLog=()=>LS.set('cnb_log',LOG.slice(-500));
-function audit(type,detail='',who='',crit=false){LOG.push({ts:now(),type,detail,who,crit});if(LOG.length>500)LOG=LOG.slice(-500);saveLog();}
+function audit(type,detail='',who='',crit=false){LOG.push({ts:now(),type,detail,who,crit});if(LOG.length>500)LOG=LOG.slice(-500);saveLog();
+  if(type==='OFFHOURS_DENIED')notify('off',{title:'⛔ Intento fuera de horario · '+S.brand,body:detail+' ('+hhmm()+')',prio:3})}
 
 async function ensureDefaults(){
   if(!SEC){SEC={admin:await sha('1234'),duress:await sha('9999'),fAdmin:true,fDuress:true};}
@@ -2676,9 +2679,35 @@ async function fireRelay(ms,silent){
 async function webhook(payload){
   if(!S.webhook)return;try{await fetch(S.webhook,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify(payload)})}catch(_){}
 }
+/* ====================== avisos al celular ====================== */
+const hhmm=()=>{const d=new Date();return pad(d.getHours())+':'+pad(d.getMinutes())};
+const NQ=()=>LS.get('cnb_q',[]),setNQ=q=>LS.set('cnb_q',q.slice(-30));
+const lastN={};
+async function sendNtfy(o){
+  const N=S.notif.ntfy,base=String(N.server||'https://ntfy.sh').replace(/\/+$/,'');
+  try{const r=await fetch(base+'/',{method:'POST',body:JSON.stringify({topic:N.topic,title:o.title,message:o.body,priority:o.prio||3})});if(r.ok)return true}catch(_){}
+  try{const r=await fetch(base+'/'+encodeURIComponent(N.topic),{method:'POST',body:o.title+'\n'+o.body});return r.ok}catch(_){return false}
+}
+async function sendWA(r,o){
+  const url='https://api.callmebot.com/whatsapp.php?phone='+encodeURIComponent(String(r.phone).replace(/\D/g,''))+'&text='+encodeURIComponent(o.title+'\n'+o.body)+'&apikey='+encodeURIComponent(r.key);
+  try{await fetch(url,{mode:'no-cors'});return true}catch(_){return false}
+}
+async function runJob(j){if(j.ch==='ntfy')return sendNtfy(j.o);const r=S.notif.recips.find(x=>x.id===j.ch.slice(3));return r?sendWA(r,j.o):true}
+async function notify(kind,o){
+  const N=S.notif;if(!N||!N.ev[kind])return 0;
+  const t=now();if(kind!=='sos'&&kind!=='duress'&&t-(lastN[kind]||0)<8000)return 0;lastN[kind]=t;
+  const jobs=[];
+  if(N.ntfy.on&&N.ntfy.topic)jobs.push({ch:'ntfy',o});
+  if(N.wa.on)N.recips.filter(r=>r.phone&&r.key&&(!r.area||!o.area||r.area===o.area)).forEach(r=>jobs.push({ch:'wa:'+r.id,o}));
+  let sent=0;
+  await Promise.all(jobs.map(async j=>{const ok=await runJob(j);audit('NOTIFY',(j.ch==='ntfy'?'Push':'WhatsApp')+' · '+kind+' · '+(ok?'enviado':'sin conexión, se reintenta'));if(ok)sent++;else{const q=NQ();q.push({ch:j.ch,o:j.o,ts:t});setNQ(q)}}));
+  return sent;
+}
+async function flushQ(){const q=NQ();if(!q.length)return;const keep=[];for(const j of q){if(now()-j.ts>15*60000)continue;if(!(await runJob(j)))keep.push(j)}setNQ(keep)}
+setInterval(flushQ,30000);addEventListener('online',flushQ);
 function openDoor(who,via,opt={}){
   const ms=S.relayMs;
-  if(opt.silent){audit('CRITICAL_DURESS_EVENT','PIN de coacción utilizado en el portero','—',true);webhook({event:'CRITICAL_DURESS_EVENT',brand:S.brand,ts:now()});fireRelay(ms,true)}
+  if(opt.silent){audit('CRITICAL_DURESS_EVENT','PIN de coacción utilizado en el portero','—',true);webhook({event:'CRITICAL_DURESS_EVENT',brand:S.brand,ts:now()});notify('duress',{title:'🚨 Alerta silenciosa · '+S.brand,body:'Se usó el PIN de coacción en el portero ('+hhmm()+'). Verificar de inmediato.',prio:5});fireRelay(ms,true)}
   else{audit('DOOR_OPEN',via+(who?' · '+who:''),who||'');fireRelay(ms,false)}
   sfx.unlock();
   const C=2*Math.PI*90;
@@ -2804,6 +2833,7 @@ function ringArea(id){
   let who='';
   if(S.mode==='corp'){const v=$('#vname');who=v?v.value.trim():'Visita (reintento/voz)';if(v&&who.length<3){toast('Escribí tu nombre para continuar');v.focus();return}}
   curArea=a;audit('BELL','Timbre → '+a.name+(who?' · visita: '+who:''),who);webhook({event:'BELL',brand:S.brand,area:a.name,visitor:who,ts:now()});
+  notify('bell',{title:'🔔 Timbre · '+a.name,body:(who?who+' está':'Hay alguien')+' en la puerta de '+S.brand+' ('+hhmm()+').',prio:4,area:a.id}).then(n=>{if(n>0&&VIEW==='bell'&&curArea===a){const sb=$('#csub');if(sb)sb.textContent='Ya avisamos al personal por el celular. Aguardá a que te atiendan.'}});
   chime(a.chime||S.chime);say('Llamando a '+a.name+'. Aguardá un momento.');
   go('bell',id);
   bellT=setTimeout(()=>bellState('none'),45000);
@@ -2852,7 +2882,7 @@ async function submitKP(){
 function failOne(msg,type){
   FAIL.n++;audit(type,'Intento fallido #'+FAIL.n);
   const max=S.mode==='corp'?Math.min(3,S.maxFails):S.maxFails;
-  if(FAIL.n>=max){const sec=S.mode==='corp'?Math.max(60,S.lockSec):S.lockSec;FAIL={n:0,until:now()+sec*1000};audit('LOCKOUT','Bloqueo '+sec+' s por intentos fallidos',' ',true);msg='Demasiados intentos'}
+  if(FAIL.n>=max){const sec=S.mode==='corp'?Math.max(60,S.lockSec):S.lockSec;FAIL={n:0,until:now()+sec*1000};audit('LOCKOUT','Bloqueo '+sec+' s por intentos fallidos',' ',true);notify('lock',{title:'⚠️ Intentos fallidos · '+S.brand,body:'El teclado del portero se bloqueó por demasiados intentos ('+hhmm()+').',prio:4});msg='Demasiados intentos'}
   LS.set('cnb_fail',FAIL);kpErr(msg);
 }
 function kpErr(msg){
@@ -2890,6 +2920,7 @@ function dial(kind){
   const num=kind==='fam'?S.trustNum:S.emNum||'911';
   audit(kind==='fam'?'EMERGENCY_CONTACT':'EMERGENCY_911','Llamada a '+num,'',true);
   webhook({event:kind==='fam'?'EMERGENCY_CONTACT':'EMERGENCY_911',brand:S.brand,ts:now()});
+  notify('sos',{title:'🚨 EMERGENCIA · '+S.brand,body:'Se activó el botón de emergencia en el portero ('+hhmm()+'). Llamada a '+num+'.',prio:5});
   ov(`<div class="box"><h2>Pidiendo ayuda…</h2><p>Si tu dispositivo no inicia la llamada, marcá <b style="color:var(--tx)">${esc(num)}</b> desde un teléfono.</p><a class="btn y" style="min-height:70px;width:100%;font-size:22px" href="tel:${esc(num.replace(/[^\d+]/g,''))}">${ic('phone')} Llamar ${esc(num)}</a><button class="btn" data-act="ovclose">Cerrar</button></div>`);
   setTimeout(()=>{try{location.href='tel:'+num.replace(/[^\d+]/g,'')}catch(_){}},250);
 }
@@ -2984,7 +3015,7 @@ const scan={b:'',t:0};
 
 /* ====================== ADMIN ====================== */
 let TAB='general',PWA=null;
-const TABS=[['general','General','gear'],['horarios','Horarios','cal'],['personas','Accesos','users'],['areas','Áreas y timbres','bell'],['pases','Pases de visita','ticket'],['emerg','Emergencias','sos'],['voz','Asistente de voz','mic'],['rele','Relé y puerta','plug'],['nfcqr','NFC y QR','nfc'],['integ','Firmware e integración','cpu'],['audit','Auditoría','list'],['dev','Soporte y desarrollador','shield']];
+const TABS=[['general','General','gear'],['horarios','Horarios','cal'],['personas','Accesos','users'],['areas','Áreas y timbres','bell'],['pases','Pases de visita','ticket'],['emerg','Emergencias','sos'],['avisos','Avisos al celular','bell'],['voz','Asistente de voz','mic'],['rele','Relé y puerta','plug'],['nfcqr','NFC y QR','nfc'],['integ','Firmware e integración','cpu'],['audit','Auditoría','list'],['dev','Soporte y desarrollador','shield']];
 function renderAdmin(el){
   el.innerHTML=`<div class="adm"><nav>
     ${TABS.map(t=>`<button data-act="tab" data-t="${t[0]}" class="${TAB===t[0]?'on':''}">${ic(t[2])}${t[1]}</button>`).join('')}
@@ -2992,10 +3023,10 @@ function renderAdmin(el){
   </nav><div class="body" id="admbody"></div></div>`;
   admBody();
 }
-function admBody(){const b=$('#admbody');if(!b)return;b.innerHTML=(AT[TAB]||(()=>''))();bindAdm(b);if(TAB==='pases')paintQRs()}
+function admBody(){const b=$('#admbody');if(!b)return;b.innerHTML=(AT[TAB]||(()=>''))();bindAdm(b);if(TAB==='pases'||TAB==='avisos')paintQRs()}
 const fld=(label,key,type='text',extra='')=>{const v=key.split('.').reduce((o,k)=>o&&o[k],S);return `<div><label>${label}</label><input data-bind="${key}" type="${type}" value="${esc(v)}" ${extra}></div>`};
 const sw=(label,key)=>{const v=key.split('.').reduce((o,k)=>o&&o[k],S);return `<div class="sw"><span>${label}</span><input type="checkbox" data-bind="${key}" ${v?'checked':''}></div>`};
-const setupItems=()=>[['Cambiar el PIN de administrador de fábrica',!SEC.fAdmin,'general'],['Cambiar el PIN de coacción de fábrica',!SEC.fDuress,'emerg'],['Cargar al menos una persona con PIN',USERS.some(u=>u.pin),'personas'],['Cargar el WhatsApp de aviso de las áreas',AREAS.some(a=>a.wa),'areas'],['Cargar el contacto de confianza para emergencias',!!S.trustNum,'emerg']];
+const setupItems=()=>[['Cambiar el PIN de administrador de fábrica',!SEC.fAdmin,'general'],['Cambiar el PIN de coacción de fábrica',!SEC.fDuress,'emerg'],['Cargar al menos una persona con PIN',USERS.some(u=>u.pin),'personas'],['Cargar el WhatsApp de aviso de las áreas',AREAS.some(a=>a.wa),'areas'],['Cargar el contacto de confianza para emergencias',!!S.trustNum,'emerg'],['Activar avisos al celular (push o WhatsApp)',(S.notif.ntfy.on&&!!S.notif.ntfy.topic)||(S.notif.wa.on&&S.notif.recips.some(r=>r.phone&&r.key)),'avisos']];
 const AT={
  general(){const si=setupItems(),dn=si.filter(x=>x[1]).length;return `<h3>General</h3><p class="sub">Marca, horarios y modo de operación.</p>
   ${dn<si.length?`<div class="card" style="border-color:rgba(168,230,0,.5)"><b>Puesta en marcha · ${dn} de ${si.length}</b>${si.map(x=>`<div class="row" style="justify-content:space-between;padding:6px 0"><span>${x[1]?'✔':'○'} ${x[0]}</span>${x[1]?'':x[2]==='general'?'<span class="mut">más abajo</span>':`<button class="btn sm" data-act="tab" data-t="${x[2]}">Ir</button>`}</div>`).join('')}</div>`:''}
@@ -3049,6 +3080,19 @@ const AT={
   <div class="card"><label>PIN de coacción silenciosa (${S.pinLen} dígitos)</label><p class="mut" style="margin:0 0 10px">Abre la puerta sin ningún aviso en pantalla y registra <b style="color:var(--tx)">CRITICAL_DURESS_EVENT</b> en la auditoría. Valor de fábrica: 9999 — cambialo en la instalación real.</p>
    <div class="row"><input id="newduress" type="password" inputmode="numeric" maxlength="${S.pinLen}" placeholder="Nuevo PIN de coacción" style="flex:1"><button class="btn sm y" data-act="setduress">Guardar</button></div></div>
   <div class="card"><p class="mut" style="margin:0">Al presionar Emergencia hay 3 segundos para cancelar y luego se dispara <b style="color:var(--tx)">tel:${esc(S.emNum||'911')}</b>. Sin cámaras no se capturan imágenes: el evento queda en el log con fecha y hora.</p></div>`},
+ avisos(){const N=S.notif;return `<h3>Avisos al celular</h3><p class="sub">El portero avisa a los celulares que elijan los dueños: timbre, emergencia, alerta silenciosa y más. El dispositivo del portero necesita internet.</p>
+  <div class="card"><b>1 · Notificación push (recomendado)</b>
+   <p class="mut">Gratis y sin cuentas, con la app <b style="color:var(--tx)">ntfy</b> (Android e iOS). Cada persona instala la app y se suscribe al tema de abajo. El tema funciona como una contraseña: no lo compartan fuera del equipo.</p>
+   ${sw('Activar notificaciones push','notif.ntfy.on')}
+   <div class="grid2">${fld('Servidor','notif.ntfy.server','url')}${fld('Tema (contraseña del canal)','notif.ntfy.topic','text','autocomplete="off"')}</div>
+   <div class="row" style="margin-top:10px"><button class="btn sm" data-act="ntfygen">Generar tema seguro</button><button class="btn sm y" data-act="ntfytest">Enviar prueba</button><button class="btn sm" data-act="ntfycopy">Copiar tema</button></div>
+   ${N.ntfy.topic?`<div class="row" style="margin-top:12px;gap:16px;align-items:flex-start"><div class="qr" data-qr="${esc(String(N.ntfy.server).replace(/\/+$/,'')+'/'+N.ntfy.topic)}"></div><p class="mut" style="flex:1;min-width:180px;margin:0">Escaneen este QR con el celular para abrir el canal o, en la app ntfy, toquen “+” y escriban el tema.</p></div>`:''}</div>
+  <div class="card"><b>2 · WhatsApp automático (opcional)</b>
+   <p class="mut">Usa el servicio gratuito CallMeBot, que no es oficial de WhatsApp y es de uso personal. Cada persona debe activarlo una vez desde su propio WhatsApp siguiendo las instrucciones vigentes en callmebot.com y pegar acá la clave (apikey) que reciba. Teléfono con código de país, sin “+” ni espacios.</p>
+   ${sw('Activar avisos por WhatsApp','notif.wa.on')}
+   ${N.recips.map(r=>`<div class="card" data-r="${r.id}"><div class="grid2"><div><label>Nombre</label><input data-rf2="name" value="${esc(r.name)}"></div><div><label>Teléfono (ej. 5493874000000)</label><input data-rf2="phone" inputmode="tel" value="${esc(r.phone)}"></div><div><label>Apikey de CallMeBot</label><input data-rf2="key" value="${esc(r.key)}" autocomplete="off"></div><div><label>Recibe avisos de</label><select data-rf2="area"><option value="">Todas las áreas</option>${AREAS.map(a=>`<option value="${a.id}" ${r.area===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></div></div><div class="row" style="justify-content:space-between;margin-top:10px"><button class="btn sm y" data-act="watest" data-id="${r.id}">Enviar prueba</button><button class="btn sm bad" data-act="wadel" data-id="${r.id}">${ic('trash')} Quitar</button></div></div>`).join('')}
+   <button class="btn y" data-act="waadd">${ic('plus')} Agregar destinatario</button></div>
+  <div class="card"><b>Qué se avisa</b>${sw('Timbre (visita en la puerta)','notif.ev.bell')}${sw('Emergencia (botón 911 o contacto)','notif.ev.sos')}${sw('Alerta silenciosa (PIN de coacción)','notif.ev.duress')}${sw('Bloqueo por intentos fallidos','notif.ev.lock')}${sw('Intentos fuera de horario','notif.ev.off')}</div>`},
  voz(){const vs=voices();return `<h3>Asistente de voz</h3><p class="sub">Reconocimiento y síntesis nativos del navegador, sin APIs de pago.</p>
   ${sw('Asistente habilitado','voice.on')}${sw('Respuestas habladas','voice.tts')}${sw('Exigir palabra clave para ejecutar comandos','voice.wakeReq')}
   <div class="grid2">${fld('Palabra clave','voice.wake')}<div><label>Voz</label><select data-bind="voice.uri"><option value="">Automática (español)</option>${vs.map(v=>`<option value="${esc(v.voiceURI)}" ${S.voice.uri===v.voiceURI?'selected':''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select></div>
@@ -3087,6 +3131,7 @@ function bindAdm(b){
   $$('[data-uf]',b).forEach(i=>i.addEventListener('change',()=>{const u=USERS.find(x=>x.id===i.closest('[data-u]').dataset.u);u[i.dataset.uf]=i.type==='checkbox'?i.checked:i.value.trim();save();audit('CONFIG','Persona editada: '+u.name)}));
   $$('[data-af]',b).forEach(i=>i.addEventListener('change',()=>{const a=AREAS.find(x=>x.id===i.closest('[data-a]').dataset.a);a[i.dataset.af]=i.value.trim();save();audit('CONFIG','Área editada: '+a.name)}));
   $$('[data-rf]',b).forEach(i=>i.addEventListener('change',()=>{const[d,idx,k]=i.dataset.rf.split(':');S.sched[d][+idx][k]=i.value||'00:00';sv();admBody()}));
+  $$('[data-rf2]',b).forEach(i=>i.addEventListener('change',()=>{const r=S.notif.recips.find(x=>x.id===i.closest('[data-r]').dataset.r);r[i.dataset.rf2]=i.value.trim();save();audit('CONFIG','Destinatario de avisos editado')}));
   const lf=$('#logoFile',b);lf&&lf.addEventListener('change',()=>{const f=lf.files[0];if(!f)return;if(f.size>1.5e6){toast('El logo es muy pesado (máx. 1,5 MB)');return}
     const fr=new FileReader();fr.onload=()=>{S.logo=fr.result;if(!LS.set('cnb_set',S)){toast('No se pudo guardar el logo');}save();audit('CONFIG','Logo actualizado');build();paintBrand();admBody()};fr.readAsDataURL(f)});
 }
@@ -3101,6 +3146,12 @@ function cfg(i){
 }
 const sv=()=>{save();audit('CONFIG','Horarios del portero actualizados');build();tick()};
 const ADM={
+ ntfygen(){const a=crypto.getRandomValues(new Uint8Array(12));S.notif.ntfy.topic='cannabismatica-'+[...a].map(x=>x.toString(16).padStart(2,'0')).join('');S.notif.ntfy.on=true;save();audit('CONFIG','Tema push generado');admBody()},
+ async ntfycopy(){try{await navigator.clipboard.writeText(S.notif.ntfy.topic||'');toast('Tema copiado')}catch(_){toast('No se pudo copiar')}},
+ async ntfytest(){if(!S.notif.ntfy.topic)return toast('Generá o escribí un tema primero');toast('Enviando prueba…');const ok=await sendNtfy({title:'✅ Prueba · '+S.brand,body:'Si ves este aviso, las notificaciones del portero funcionan.',prio:3});audit('NOTIFY','Prueba push · '+(ok?'enviada':'falló'));toast(ok?'Prueba enviada: revisá el celular suscripto':'No se pudo enviar: revisá internet y el servidor',4000)},
+ waadd(){S.notif.recips.push({id:uid(),name:'',phone:'',key:'',area:''});save();admBody()},
+ wadel(b){S.notif.recips=S.notif.recips.filter(r=>r.id!==b.dataset.id);save();admBody()},
+ async watest(b){const r=S.notif.recips.find(x=>x.id===b.dataset.id);if(!r.phone||!r.key)return toast('Completá teléfono y apikey');await sendWA(r,{title:'✅ Prueba · '+S.brand,body:'Si ves este mensaje, los avisos por WhatsApp del portero funcionan.'});audit('NOTIFY','Prueba WhatsApp enviada a '+(r.name||r.phone));toast('Solicitud enviada: revisá el WhatsApp (puede demorar unos minutos)',4500)},
  radd(b){const d=+b.dataset.d;(S.sched[d]=S.sched[d]||[]).push({from:'09:00',to:'19:00'});sv();admBody()},
  rdel(b){S.sched[+b.dataset.d].splice(+b.dataset.i,1);sv();admBody()},
  r24(b){S.sched[+b.dataset.d]=[{from:'00:00',to:'00:00'}];sv();admBody()},
@@ -3152,7 +3203,7 @@ if('speechSynthesis' in window)speechSynthesis.onvoiceschanged=()=>{};
 (async()=>{
   await ensureDefaults();
   build();paintBrand();tick();go('home');
-  window.__cnb={S:()=>S,go,openDoor,log:()=>LOG,schedActive,isEnabled};
+  window.__cnb={S:()=>S,go,openDoor,log:()=>LOG,schedActive,isEnabled,notify,flushQ};
 })();
 })();
 </script>
