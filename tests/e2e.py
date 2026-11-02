@@ -39,13 +39,14 @@ def wait(fn, t=8):
 
 SET = {'notif': {'ntfy': {'on': True, 'server': NTFY, 'topic': TOPIC}, 'wa': {'on': True},
        'recips': [{'id': 'r1', 'name': 'Ana', 'phone': '5493874000000', 'key': '999', 'area': ''}],
-       'ev': {'bell': True, 'sos': True, 'duress': True, 'lock': True, 'off': True}}}
+       'ev': {'bell': True, 'sos': True, 'duress': True, 'lock': True, 'off': True}}, 'qr': {'on': True, 'topic': '', 'wa': '', 'page': '__WEB__/timbre.html'}}
 wa = []
 try:
     with sync_playwright() as p:
         b = p.chromium.launch()
         ctx = b.new_context(viewport={'width': 1280, 'height': 860})
-        ctx.add_init_script(f"if(!localStorage.getItem('cnb_ver')){{localStorage.setItem('cnb_ver','2');localStorage.setItem('cnb_set',JSON.stringify({json.dumps(SET)}))}}")
+        ctx.add_init_script(f"if(!localStorage.getItem('cnb_ver')){{localStorage.setItem('cnb_ver','2');localStorage.setItem('cnb_set',JSON.stringify({json.dumps(SET).replace('__WEB__', WEB)}))}}")
+        ctx.route('https://wa.me/**', lambda route: route.fulfill(status=200, body='ok'))
         ctx.route('https://api.callmebot.com/**', lambda route: (wa.append(parse_qs(urlparse(route.request.url).query)), route.fulfill(status=200, body='Message queued')))
         errs = []
         pg = ctx.new_page(); pg.on('pageerror', lambda e: errs.append(str(e)))
@@ -120,11 +121,60 @@ try:
         check('Respuesta «Ya voy» se muestra en la pantalla del portero', True)
         pg.screenshot(path=os.path.join(SHOTS, 'c2-respuesta-timbre.png'))
         pg.locator('#v_bell [data-act="cancelbell"]').click(); pg.locator('[data-act="home"]').first.click(); pg.wait_for_timeout(300)
+        # Timbre por QR desde el celular del visitante
+        pg.reload(); pg.wait_for_timeout(1500)
+        h = pg.locator('.hero h1').bounding_box(); x, y = h['x'] + 5, h['y'] + h['height'] / 2
+        pg.mouse.click(x, y); pg.wait_for_timeout(120); pg.mouse.click(x, y); pg.wait_for_timeout(400)
+        for d in '1234': pg.locator(f'#kpad [data-d="{d}"]').click()
+        pg.locator('#kpad [data-act="kok"]').click(); pg.wait_for_timeout(600)
+        pg.locator('[data-act="tab"][data-t="portero"]').first.click(); pg.wait_for_timeout(1500)
+        check('Sección «Timbre por QR» activa y con QR', 'escuchando timbres' in pg.inner_text('#qrst') and pg.locator('#admbody .qr svg').count() == 1, pg.inner_text('#qrst'))
+        pg.screenshot(path=os.path.join(SHOTS, 'c3-timbre-qr.png'), full_page=True)
+        qurl = pg.evaluate('__cnb.qrUrl()')
+        with pg.expect_popup() as pop: pg.locator('[data-act="qrprint"]').click()
+        poster = pop.value; poster.wait_for_timeout(300)
+        check('Cartel imprimible con QR y nombre', 'TOCÁ EL TIMBRE' in poster.content() and 'Cannabismática' in poster.content()); poster.close()
+        topic_qr = pg.evaluate('__cnb.S().qr.topic')
+        pg.locator('[data-act="exitadm"]').first.click(); pg.wait_for_timeout(300)
+        mob = b.new_context(viewport={'width': 390, 'height': 800}, is_mobile=True, has_touch=True).new_page()
+        mob.goto(qurl); mob.wait_for_timeout(700)
+        check('Página del visitante con las áreas', mob.locator('.chip').count() == 5 and 'Consultas' in mob.inner_text('#chips'))
+        mob.fill('#name', 'Marta'); mob.locator('.chip[data-m="Consultas"]').click(); mob.locator('#bell').click()
+        pg.wait_for_function("document.querySelector('#ov').classList.contains('on') && document.querySelector('#ov').textContent.includes('Marta')", timeout=8000)
+        check('Suena en el portero con nombre y área', 'Consultas' in pg.inner_text('#ov'))
+        qring = wait(lambda: [m for m in msgs() if 'Consultas' in (m.get('title') or '') and m.get('actions')])
+        check('Aviso push del timbre por QR con botones', bool(qring))
+        act = qring[-1]['actions'][1]
+        urlopen(Request(act['url'], data=act['body'].encode(), method='POST'), timeout=3)
+        mob.wait_for_function("document.querySelector('#status').textContent.includes('Estamos atendiendo')", timeout=8000)
+        check('El visitante ve en su celular la respuesta del personal', True)
+        mob.screenshot(path=os.path.join(SHOTS, 'c4-visitante-respuesta.png'))
+        check('El portero cierra el aviso al responder', wait(lambda: not pg.locator('#ov').evaluate("e => e.classList.contains('on')"), 5))
+        mob.wait_for_timeout(8500); mob.reload(); mob.wait_for_timeout(500)
+        mob.locator('#bell').click(); pg.wait_for_function("document.querySelector('#ov [data-act=qrrep]')", timeout=8000)
+        pg.locator('#ov [data-act="qrrep"][data-c="voy"]').click()
+        mob.wait_for_function("document.querySelector('#status').textContent.includes('Ya vamos')", timeout=8000)
+        check('Respuesta desde la pantalla del portero llega al visitante', True)
+        pg.evaluate("(()=>{const s=JSON.parse(localStorage.getItem('cnb_set'));s.enMode='off';localStorage.setItem('cnb_set',JSON.stringify(s))})()")
+        pg.reload(); pg.wait_for_timeout(1500)
+        mob.wait_for_timeout(8500); mob.reload(); mob.wait_for_timeout(500); mob.locator('#bell').click()
+        mob.wait_for_function("document.querySelector('#status').textContent.includes('fuera de horario')", timeout=8000)
+        check('Fuera de horario el visitante ve el horario', 'Horario' in mob.inner_text('#status'))
+        pg.evaluate("(()=>{const s=JSON.parse(localStorage.getItem('cnb_set'));s.enMode='always';localStorage.setItem('cnb_set',JSON.stringify(s))})()")
+        pg.reload(); pg.wait_for_timeout(800)
         # Horarios: apagado manual → fuera de servicio
         pg.evaluate("(()=>{const s=JSON.parse(localStorage.getItem('cnb_set'));s.enMode='off';localStorage.setItem('cnb_set',JSON.stringify(s))})()")
         pg.reload(); pg.wait_for_timeout(1000)
         check('Fuera de horario: aviso y timbre deshabilitado', 'fuera de servicio' in pg.inner_text('#v_home').lower() and pg.locator('.tile[data-act="bell"]').is_disabled())
         check('Fuera de horario: la emergencia sigue disponible', pg.locator('.tile[data-act="sos"]').is_enabled())
+        # Contacto de confianza: WhatsApp de auxilio
+        pg.evaluate("(()=>{const s=JSON.parse(localStorage.getItem('cnb_set'));s.trustNum='+5493875550000';s.trustName='Coordinación';localStorage.setItem('cnb_set',JSON.stringify(s))})()")
+        pg.reload(); pg.wait_for_timeout(800)
+        pg.locator('.tile[data-act="sos"]').click(); pg.wait_for_timeout(300)
+        with ctx.expect_page() as wap:
+            pg.locator('[data-act="sosfam"]').click(); pg.wait_for_timeout(3800)
+        check('Contacto de confianza: WhatsApp de auxilio', 'wa.me/5493875550000' in wap.value.url and 'AUXILIO' in wap.value.url.replace('%20', ' ').upper(), wap.value.url)
+        wap.value.close(); pg.goto(WEB + '/index.html'); pg.wait_for_timeout(800)  # la llamada tel: saca la página en el navegador de prueba
         # Emergencia
         pg.locator('.tile[data-act="sos"]').click(); pg.wait_for_timeout(300)
         pg.locator('[data-act="sos911"]').click(); pg.wait_for_timeout(3800)

@@ -2562,7 +2562,8 @@ const DEF={
   enMode:'always',offStaff:true,
   sched:{0:[],1:[{from:'09:00',to:'19:00'}],2:[{from:'09:00',to:'19:00'}],3:[{from:'09:00',to:'19:00'}],4:[{from:'09:00',to:'19:00'}],5:[{from:'09:00',to:'19:00'}],6:[]},
   pinLen:4, maxFails:5, lockSec:30, idleSec:45, relayMs:5000, relayUrl:'', relayToken:'', webhook:'', clientUrl:'',
-  emNum:'911', trustName:'', trustNum:'',
+  emNum:'911', trustName:'', trustNum:'', trustWa:true,
+  qr:{on:true,topic:'',wa:'',page:''},
   voice:{on:true,wake:'portero',wakeReq:false,uri:'',rate:1,tts:true},
   chime:'campana', sound:true,
   bio:{pk:{on:false},face:{on:false,thr:0.5,live:true,tl:15}},
@@ -2572,7 +2573,7 @@ if(LS.get('cnb_ver',0)!==2){['cnb_set','cnb_sec','cnb_users','cnb_areas','cnb_pa
 let S=Object.assign({},DEF,LS.get('cnb_set',{}));
 S.sched=JSON.parse(JSON.stringify(Object.assign({},DEF.sched,S.sched||{}))); S.voice=Object.assign({},DEF.voice,S.voice||{});
 S.notif=JSON.parse(JSON.stringify(Object.assign({},DEF.notif,S.notif||{})));S.notif.ntfy=Object.assign({},DEF.notif.ntfy,S.notif.ntfy);S.notif.wa=Object.assign({},DEF.notif.wa,S.notif.wa);S.notif.ev=Object.assign({},DEF.notif.ev,S.notif.ev);S.notif.recips=S.notif.recips||[];
-S.bio=JSON.parse(JSON.stringify(Object.assign({},DEF.bio,S.bio||{})));S.bio.pk=Object.assign({},DEF.bio.pk,S.bio.pk);S.bio.face=Object.assign({},DEF.bio.face,S.bio.face);
+S.qr=Object.assign({},DEF.qr,S.qr||{});S.bio=JSON.parse(JSON.stringify(Object.assign({},DEF.bio,S.bio||{})));S.bio.pk=Object.assign({},DEF.bio.pk,S.bio.pk);S.bio.face=Object.assign({},DEF.bio.face,S.bio.face);
 let SEC=LS.get('cnb_sec',null);   // {admin,duress}
 let USERS=LS.get('cnb_users',null);
 let AREAS=LS.get('cnb_areas',null);
@@ -2702,16 +2703,51 @@ async function sendWA(r,o){
 }
 /* respuestas del personal desde la notificación: se ven y se escuchan en la pantalla del timbre */
 const BELL_BTN={voy:'Ya voy',momento:'Un momento',nopuede:'No podemos'};
-const BELL_REPLIES={voy:'¡Ya vamos! Aguardá un momento.',momento:'Estamos atendiendo: en unos minutos te recibimos.',nopuede:'Ahora no podemos atenderte. Disculpá las molestias.'};
-let ctlES=null,ctlKey='';const ringIds=new Set();
+const BELL_REPLIES={voy:'¡Ya vamos! Aguardá un momento.',momento:'Estamos atendiendo: en unos minutos te recibimos.',nopuede:'Ahora no podemos atenderte. Disculpá las molestias.',cerrado:'Estamos fuera de horario.'};
+let ctlES=null,ctlKey='',qrState='off';const ringIds=new Set();
+const ntBase=()=>String(S.notif.ntfy.server||'https://ntfy.sh').replace(/\/+$/,'');
 function startCtl(){
-  const N=S.notif.ntfy,base=String(N.server||'https://ntfy.sh').replace(/\/+$/,''),key=N.on&&N.topic?base+'|'+N.topic:'';
+  const N=S.notif.ntfy,topics=[];
+  if(N.on&&N.topic)topics.push(N.topic+'-c');
+  if(S.qr.on)topics.push(qrTopic());
+  const key=topics.length?ntBase()+'|'+topics.join(','):'';
   if(key===ctlKey)return;ctlKey=key;if(ctlES){ctlES.close();ctlES=null}
+  qrState=S.qr.on?'conn':'off';
   if(!key||!window.EventSource)return;
-  ctlES=new EventSource(base+'/'+encodeURIComponent(N.topic+'-c')+'/sse?since=30s');
-  ctlES.onmessage=ev=>{try{const m=JSON.parse(ev.data);if(m.event&&m.event!=='message')return;const p=JSON.parse(m.message);if(p&&p.type==='reply')bellReply(p)}catch(_){}};
+  ctlES=new EventSource(ntBase()+'/'+topics.map(encodeURIComponent).join(',')+'/sse?since=60s');
+  ctlES.onopen=()=>{qrState='ok';const e=$('#qrst');if(e){e.className='tag ok';e.textContent='Activo: escuchando timbres'}};
+  ctlES.onerror=()=>{qrState='conn'};
+  ctlES.onmessage=ev=>{try{const m=JSON.parse(ev.data);if(m.event&&m.event!=='message')return;let p;try{p=JSON.parse(m.message)}catch(_){p={type:'ring',msg:''}}
+    if(m.topic===S.qr.topic&&p.type==='ring')return onQrRing(p,m);
+    if(p&&p.type==='reply')bellReply(p)}catch(_){}};
+}
+/* ====================== timbre por QR desde el celular del visitante ====================== */
+function qrTopic(){if(!/^[\w-]{10,64}$/.test(S.qr.topic||'')){const a=crypto.getRandomValues(new Uint8Array(12));S.qr.topic='cnb-'+[...a].map(x=>x.toString(16).padStart(2,'0')).join('');save()}return S.qr.topic}
+function qrPage(){if(S.qr.page)return S.qr.page;const h=new URL('timbre.html',location.href);return h.protocol==='https:'?h.origin+h.pathname:'https://raveholding.github.io/PorteroCannabismatica/timbre.html'}
+function qrUrl(){const u=new URL(qrPage());u.searchParams.set('t',qrTopic());u.searchParams.set('n',S.brand);u.searchParams.set('a',AREAS.map(a=>a.name).join('|'));if(ntBase()!=='https://ntfy.sh')u.searchParams.set('h',ntBase());const w=String(S.qr.wa||'').replace(/\D/g,'');if(w.length>=8)u.searchParams.set('w',w);return u.toString()}
+const qrSeen=new Set(),qrRings=new Map();let lastQr=0;
+function qrPublish(id,code,text){return fetch(ntBase()+'/'+encodeURIComponent(qrTopic()+'-r'),{method:'POST',body:JSON.stringify({type:'reply',id,code,text:text||BELL_REPLIES[code]})}).then(r=>r.ok).catch(()=>false)}
+function onQrRing(p,m){
+  const id=String(p.id||m.id||'').slice(0,40);if(!id||qrSeen.has(id))return;qrSeen.add(id);if(qrSeen.size>200)qrSeen.clear();
+  if(m.time&&now()/1000-m.time>90)return;
+  const name=String(p.name||'').slice(0,40),area=String(p.msg||'').slice(0,60),a=AREAS.find(x=>x.name===area);
+  if(!p.test&&!isEnabled()){qrPublish(id,'cerrado','Estamos fuera de horario. Horario de atención: '+hoursTxt()+'.');audit('OFFHOURS_DENIED','Timbre por QR fuera de servicio'+(name?' · '+name:''),name);notify('off',{title:'⛔ Timbre fuera de horario · '+S.brand,body:'Tocaron desde un celular'+(name?' ('+name+')':'')+' a las '+hhmm()+'. Se le mostró el horario.',prio:3});return}
+  if(now()-lastQr<8000){qrPublish(id,'momento');return}lastQr=now();
+  qrRings.set(id,{id,name,area});if(qrRings.size>50)qrRings.delete(qrRings.keys().next().value);
+  audit('BELL','Timbre por QR'+(area?' → '+area:'')+(name?' · visita: '+name:''),name);webhook({event:'BELL',via:'qr',brand:S.brand,area,visitor:name,ts:now()});
+  chime((a&&a.chime)||S.chime);
+  ov(`<div class="box"><h2>${ic('bell')} Timbre desde un celular</h2><p>${esc([name,area].filter(Boolean).join(' · ')||'Visita en la puerta')}</p>
+    <div class="row" style="justify-content:center">${Object.entries(BELL_BTN).map(([c,l])=>`<button class="btn ${c==='voy'?'y':''}" data-act="qrrep" data-id="${esc(id)}" data-c="${c}">${l}</button>`).join('')}</div><button class="btn" data-act="ovclose">Cerrar</button></div>`);
+  notify('bell',{title:'🔔 Timbre · '+(area||'Portero'),body:(name?name+' está':'Hay alguien')+' en la puerta de '+S.brand+' (desde su celular, '+hhmm()+'). Respondé con los botones.',prio:4,area:a&&a.id,ring:id});
+}
+async function qrAnswer(id,code,by){
+  const r=qrRings.get(id);if(!r||r.ans||!BELL_REPLIES[code])return;r.ans=code;
+  const ok=await qrPublish(id,code);audit('BELL_REPLY','Timbre por QR · '+BELL_REPLIES[code]+' ('+by+')',r.name);
+  const o=$('#ov [data-act="qrrep"]');if(o&&o.dataset.id===id)ov(null);
+  toast(ok?'Respuesta enviada al celular del visitante':'Sin internet: no se pudo responder');
 }
 function bellReply(p){
+  if(qrRings.has(p.id))return qrAnswer(p.id,p.code,'notificación');
   const txt=BELL_REPLIES[p.code];if(!txt||!curArea||!ringIds.has(p.id)||VIEW!=='bell')return;
   ringIds.clear();clearTimeout(bellT);
   const st=$('#cstate'),sb=$('#csub'),ac=$('#cacts');if(st)st.textContent=txt;if(sb)sb.textContent='Respuesta del personal · '+hhmm();if(ac&&p.code!=='nopuede')ac.innerHTML='';
@@ -3100,8 +3136,12 @@ function dial(kind){
   audit(kind==='fam'?'EMERGENCY_CONTACT':'EMERGENCY_911','Llamada a '+num,'',true);
   webhook({event:kind==='fam'?'EMERGENCY_CONTACT':'EMERGENCY_911',brand:S.brand,ts:now()});
   notify('sos',{title:'🚨 EMERGENCIA · '+S.brand,body:'Se activó el botón de emergencia en el portero ('+hhmm()+'). Llamada a '+num+'.',prio:5});
-  ov(`<div class="box"><h2>Pidiendo ayuda…</h2><p>Si tu dispositivo no inicia la llamada, marcá <b style="color:var(--tx)">${esc(num)}</b> desde un teléfono.</p><a class="btn y" style="min-height:70px;width:100%;font-size:22px" href="tel:${esc(num.replace(/[^\d+]/g,''))}">${ic('phone')} Llamar ${esc(num)}</a><button class="btn" data-act="ovclose">Cerrar</button></div>`);
-  setTimeout(()=>{try{location.href='tel:'+num.replace(/[^\d+]/g,'')}catch(_){}},250);
+  const aux=kind==='fam'&&S.trustWa&&S.trustNum,auxTxt='🚨 AUXILIO desde '+S.brand+' ('+hhmm()+'). Necesito ayuda.',waUrl=g=>'https://wa.me/'+String(S.trustNum).replace(/\D/g,'')+'?text='+encodeURIComponent(auxTxt+g);
+  ov(`<div class="box"><h2>Pidiendo ayuda…</h2><p>Si tu dispositivo no inicia la llamada, marcá <b style="color:var(--tx)">${esc(num)}</b> desde un teléfono.</p><a class="btn y" style="min-height:70px;width:100%;font-size:22px" href="tel:${esc(num.replace(/[^\d+]/g,''))}">${ic('phone')} Llamar ${esc(num)}</a>${aux?`<a class="btn m" id="auxwa" target="_blank" rel="noopener" href="${esc(waUrl(''))}">Enviar WhatsApp de auxilio</a>`:''}<button class="btn" data-act="ovclose">Cerrar</button></div>`);
+  if(aux){audit('EMERGENCY_WA','WhatsApp de auxilio a '+(S.trustName||S.trustNum),'',true);
+    if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>{const a=$('#auxwa');if(a)a.href=waUrl(' Ubicación: https://maps.google.com/?q='+p.coords.latitude+','+p.coords.longitude)},()=>{},{timeout:4000});
+    try{window.open(waUrl(''),'_blank')}catch(_){}}
+  setTimeout(()=>{try{location.href='tel:'+num.replace(/[^\d+]/g,'')}catch(_){}},aux?900:250);
 }
 
 /* ====================== asistente de voz ====================== */
@@ -3170,7 +3210,8 @@ const A={
  kdel(){if(KP&&KP.buf){KP.buf=KP.buf.slice(0,-1);$$('#kdots i').forEach((e,i)=>e.classList.toggle('f',i<KP.buf.length))}},
  kok(){submitKP()},
  ring(b){ringArea(b.dataset.id)},
- cancelbell(){stopBell();go('bell')}
+ cancelbell(){stopBell();go('bell')},
+ qrrep(b){qrAnswer(b.dataset.id,b.dataset.c,'portero')}
 };
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
@@ -3198,7 +3239,7 @@ const scan={b:'',t:0};
 
 /* ====================== ADMIN ====================== */
 let TAB='general',PWA=null;
-const TABS=[['general','General','gear'],['horarios','Horarios','cal'],['personas','Accesos','users'],['areas','Áreas y timbres','bell'],['pases','Pases de visita','ticket'],['emerg','Emergencias','sos'],['avisos','Avisos al celular','bell'],['bio','Huella y rostro','finger'],['voz','Asistente de voz','mic'],['rele','Relé y puerta','plug'],['nfcqr','NFC y QR','nfc'],['integ','Firmware e integración','cpu'],['audit','Auditoría','list'],['dev','Soporte y desarrollador','shield']];
+const TABS=[['general','General','gear'],['horarios','Horarios','cal'],['personas','Accesos','users'],['areas','Áreas y timbres','bell'],['portero','Timbre por QR','qr'],['pases','Pases de visita','ticket'],['emerg','Emergencias','sos'],['avisos','Avisos al celular','bell'],['bio','Huella y rostro','finger'],['voz','Asistente de voz','mic'],['rele','Relé y puerta','plug'],['nfcqr','NFC y QR','nfc'],['integ','Firmware e integración','cpu'],['audit','Auditoría','list'],['dev','Soporte y desarrollador','shield']];
 function renderAdmin(el){
   el.innerHTML=`<div class="adm"><nav>
     ${TABS.map(t=>`<button data-act="tab" data-t="${t[0]}" class="${TAB===t[0]?'on':''}">${ic(t[2])}${t[1]}</button>`).join('')}
@@ -3207,7 +3248,7 @@ function renderAdmin(el){
   admBody();
 }
 async function checkFace(){const e=$('#fastat');if(!e)return;try{const r=await fetch('face/model/face_recognition_model-weights_manifest.json',{cache:'no-store'});e.className='tag '+(r.ok?'ok':'bad');e.textContent=r.ok?'Modelo disponible':'Falta la carpeta face/'}catch(_){e.className='tag bad';e.textContent='Falta la carpeta face/ (o se abrió como archivo local)'}}
-function admBody(){const b=$('#admbody');if(!b)return;b.innerHTML=(AT[TAB]||(()=>''))();bindAdm(b);if(TAB==='bio')checkFace();if(TAB==='pases'||TAB==='avisos')paintQRs()}
+function admBody(){const b=$('#admbody');if(!b)return;b.innerHTML=(AT[TAB]||(()=>''))();bindAdm(b);if(TAB==='bio')checkFace();if(TAB==='pases'||TAB==='avisos'||TAB==='portero')paintQRs()}
 const fld=(label,key,type='text',extra='')=>{const v=key.split('.').reduce((o,k)=>o&&o[k],S);return `<div><label>${label}</label><input data-bind="${key}" type="${type}" value="${esc(v)}" ${extra}></div>`};
 const sw=(label,key)=>{const v=key.split('.').reduce((o,k)=>o&&o[k],S);return `<div class="sw"><span>${label}</span><input type="checkbox" data-bind="${key}" ${v?'checked':''}></div>`};
 const setupItems=()=>[['Cambiar el PIN de administrador de fábrica',!SEC.fAdmin,'general'],['Cambiar el PIN de coacción de fábrica',!SEC.fDuress,'emerg'],['Cargar al menos una persona con PIN',USERS.some(u=>u.pin),'personas'],['Cargar el WhatsApp de aviso de las áreas',AREAS.some(a=>a.wa),'areas'],['Cargar el contacto de confianza para emergencias',!!S.trustNum,'emerg'],['Activar avisos al celular (push o WhatsApp)',(S.notif.ntfy.on&&!!S.notif.ntfy.topic)||(S.notif.wa.on&&S.notif.recips.some(r=>r.phone&&r.key)),'avisos']];
@@ -3254,6 +3295,14 @@ const AT={
    <div><label>Timbre propio</label><select data-af="chime"><option value="">Por defecto</option>${Object.entries(CHIMES).map(([k,c])=>`<option value="${k}" ${a.chime===k?'selected':''}>${c.n}</option>`).join('')}</select></div></div>
    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn sm bad" data-act="adel" data-id="${a.id}">${ic('trash')} Quitar</button></div></div>`).join('')}
   <button class="btn y" data-act="aadd">${ic('plus')} Agregar área</button>`},
+ portero(){const u=qrUrl();return `<h3>Timbre por QR desde el celular del visitante</h3><p class="sub">Pegá este QR (y un sticker NFC) en la puerta. El visitante lo escanea con su celular, elige el área y toca el timbre: suena en este dispositivo, les llega el aviso al personal y la respuesta aparece en la pantalla del visitante. Fuera de horario, el visitante ve el horario de atención.</p>
+  <div class="card">${sw('Timbre por QR activo en este dispositivo','qr.on')}
+   <div class="row" style="margin-top:8px"><span id="qrst" class="tag ${qrState==='ok'?'ok':S.qr.on?'':'bad'}">${qrState==='ok'?'Activo: escuchando timbres':S.qr.on?'Conectando…':'Apagado'}</span><span class="mut">Este dispositivo tiene que quedar encendido, con el portero abierto y con internet.</span></div></div>
+  <div class="card"><div class="row" style="align-items:flex-start;gap:18px"><div class="qr" data-qr="${esc(u)}" style="width:230px;max-width:100%"></div>
+   <div style="display:flex;flex-direction:column;gap:8px;flex:1;min-width:220px"><button class="btn y" data-act="qrprint">${ic('qr')} Imprimir cartel para la puerta</button><button class="btn" data-act="qrnfc">${ic('nfc')} Grabar sticker NFC</button><button class="btn" data-act="qrcopy">Copiar enlace</button><button class="btn" data-act="qropen">Abrir la página del visitante</button><button class="btn" data-act="qrtest">${ic('bell')} Probar timbre</button><button class="btn ghost" data-act="qrregen">Regenerar código (invalida carteles viejos)</button></div></div></div>
+  <div class="grid2">${fld('WhatsApp de la asociación para que el visitante escriba (opcional)','qr.wa','tel','placeholder="+549387..."')}</div>
+  <div class="card"><b>Cómo responde el personal</b><p class="mut" style="margin:6px 0 0">Desde la notificación del celular (botones <b style="color:var(--tx)">Ya voy · Un momento · No podemos</b>, ver «Avisos al celular») o desde este dispositivo cuando suena. El área que elige el visitante filtra a quién le llega el WhatsApp.</p></div>
+  <div class="card"><b>Sticker NFC</b><p class="mut" style="margin:6px 0 0">Comprá stickers NFC NTAG213 o NTAG215. Desde un celular Android con Chrome, abrí este panel, tocá «Grabar sticker NFC» y apoyá el sticker atrás del celular. Pegalo junto al QR: el visitante acerca su celular y se abre el timbre.</p></div>`},
  pases(){return `<h3>Pases de visita</h3><p class="sub">Códigos temporales para visitas, proveedores o talleres. El visitante los ingresa en “Tengo un pase”, o los lee un lector QR USB/Bluetooth.</p>
   <div class="card"><div class="grid2"><div><label>Nombre del visitante</label><input id="pname" placeholder="Ej. Proveedor limpieza"></div>
    <div><label>Validez</label><select id="pexp"><option value="15">15 minutos</option><option value="60" selected>1 hora</option><option value="240">4 horas</option><option value="1440">24 horas</option></select></div>
@@ -3265,7 +3314,7 @@ const AT={
    <div class="row" style="margin-top:10px"><a class="btn sm m" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent('Tu pase de visita para '+S.brand+': '+p.code+(p.exp?' (vence '+fdt(p.exp)+')':'')+'. Ingresalo en “Tengo un pase” en el portero.')}">Enviar por WhatsApp</a>
    <button class="btn sm bad" data-act="pdel" data-c="${p.code}">${ic('trash')}</button></div></div></div></div>`}).join('')}`},
  emerg(){return `<h3>Emergencias y PIN de coacción</h3><p class="sub">Configurá a quién se llama y cómo se avisa en silencio.</p>
-  <div class="grid2">${fld('Número de emergencias','emNum')}${fld('Contacto de confianza (nombre)','trustName')}${fld('Contacto de confianza (teléfono)','trustNum','tel','placeholder="+549387..."')}${fld('Webhook de alertas (opcional, https)','webhook','url','placeholder="https://..."')}</div>
+  <div class="grid2">${fld('Número de emergencias','emNum')}${fld('Contacto de confianza (nombre)','trustName')}${fld('Contacto de confianza (teléfono)','trustNum','tel','placeholder="+549387..."')}</div>${sw('Al llamar al contacto, enviarle también un WhatsApp de auxilio (con ubicación si el dispositivo la permite)','trustWa')}<div class="grid2">${fld('Webhook de alertas (opcional, https)','webhook','url','placeholder="https://..."')}</div>
   <div class="card"><label>PIN de coacción silenciosa (${S.pinLen} dígitos)</label><p class="mut" style="margin:0 0 10px">Abre la puerta sin ningún aviso en pantalla y registra <b style="color:var(--tx)">CRITICAL_DURESS_EVENT</b> en la auditoría. Valor de fábrica: 9999 — cambialo en la instalación real.</p>
    <div class="row"><input id="newduress" type="password" inputmode="numeric" maxlength="${S.pinLen}" placeholder="Nuevo PIN de coacción" style="flex:1"><button class="btn sm y" data-act="setduress">Guardar</button></div></div>
   <div class="card"><p class="mut" style="margin:0">Al presionar Emergencia hay 3 segundos para cancelar y luego se dispara <b style="color:var(--tx)">tel:${esc(S.emNum||'911')}</b>. Sin cámaras no se capturan imágenes: el evento queda en el log con fecha y hora.</p></div>`},
@@ -3286,7 +3335,7 @@ const AT={
   <div class="card"><b>Huella o biometría del celular (passkeys)</b> ${pkOK()?'<span class="tag ok">Disponible</span>':'<span class="tag bad">Requiere HTTPS</span>'}
    <p class="mut">La huella se verifica en el celular o en el sensor del dispositivo: el portero no la ve ni la guarda, solo recibe una firma. Cada persona puede registrar su propio celular (escaneando un QR) o la huella de este dispositivo.</p>
    ${sw('Permitir ingreso con huella','bio.pk.on')}<p class="mut" style="margin:0">Personas con huella registrada: ${np}.</p>
-   ${pkOK()?'':'<p class="mut">Abrí el portero desde su dirección web (https://…), por ejemplo en GitHub Pages: no funciona desde un archivo local. Si cambia la dirección web hay que volver a registrar las huellas.</p>'}</div>
+   ${pkOK()?'':'<p class="mut">Abrí el portero desde su dirección web segura (https://…): no funciona desde un archivo descargado. Si cambia la dirección web hay que volver a registrar las huellas.</p>'}</div>
   <div class="card"><b>Reconocimiento facial</b> <span id="fastat" class="tag">Verificando modelo…</span>
    <p class="mut">La cámara se enciende solo cuando alguien toca “Reconocimiento facial”. No se guardan fotos ni videos: solo una plantilla numérica de cada persona registrada. Es menos seguro que la huella: un video de la persona podría engañarlo, por eso se exige un parpadeo.</p>
    ${sw('Permitir ingreso con reconocimiento facial','bio.face.on')}${sw('Exigir parpadeo (anti-foto)','bio.face.live')}
@@ -3342,6 +3391,7 @@ function cfg(i){
   let o=S;path.slice(0,-1).forEach(k=>o=o[k]);o[path.at(-1)]=v;save();audit('CONFIG',i.dataset.bind+' actualizado');
   if(['brand','sub','tagline','addr','mode','emNum','voice.on','enMode','offStaff','bio.pk.on','bio.face.on'].includes(i.dataset.bind)){build();paintBrand()}
   if(i.dataset.bind==='enMode')admBody();
+  if(i.dataset.bind==='qr.on'||i.dataset.bind==='qr.wa'||i.dataset.bind==='notif.ntfy.server'){ctlKey='';startCtl();if(TAB==='portero')admBody()}
   if(i.dataset.bind==='pinLen'){toast('Largo de PIN cambiado: volvé a definir los PIN de cada persona y el de coacción.',4500);admBody()}
   tick();
 }
@@ -3381,6 +3431,13 @@ const ADM={
  padd(){const name=$('#pname').value.trim()||'Visita';const m=+$('#pexp').value;const max=Math.max(1,+$('#pmax').value||1);
    let code;do{code=String(Math.floor(100000+Math.random()*900000))}while(PASSES.some(p=>p.code===code));
    PASSES.push({code,name,exp:now()+m*60000,max,used:0,ts:now()});save();audit('PASS_CREATED',name+' · '+m+' min · '+max+' uso(s)');admBody()},
+ qrprint(){const u=qrUrl(),q=qrcode(0,'M');q.addData(u);q.make();const w=window.open('','_blank');if(!w)return toast('Permití las ventanas emergentes para imprimir');
+   w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Cartel timbre</title><style>@page{size:A4;margin:14mm}body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;text-align:center;color:#0B0E09}.p{border:4px solid #1F8A70;border-radius:28px;padding:28px 24px;max-width:170mm;margin:0 auto}img.l{width:34mm;height:34mm;border-radius:8mm}h1{font-size:34px;margin:14px 0 4px}h2{font-size:20px;margin:0 0 10px;color:#1F8A70}p{font-size:18px;margin:6px 0}.q svg{width:115mm;height:115mm}.s{font-size:12px;color:#555}</style></head><body><div class="p"><img class="l" src="${S.logo||LOGO}"><h1>🔔 TOCÁ EL TIMBRE</h1><h2>${esc(S.brand)}</h2><p><b>Escaneá con la cámara de tu celular</b></p><div class="q">${q.createSvgTag({cellSize:6,margin:2,scalable:true})}</div><p>o <b>acercá tu celular</b> al sticker NFC</p><p class="s">Te respondemos en tu pantalla · Portero Digital SVB</p></div><script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script></body></html>`);w.document.close();audit('CONFIG','Cartel del timbre por QR impreso')},
+ async qrnfc(){if(!('NDEFReader' in window))return toast('Grabar NFC: abrí este panel en Chrome de un celular Android',4000);try{toast('Apoyá el sticker NFC atrás del celular…',5000);await new NDEFReader().write({records:[{recordType:'url',data:qrUrl()}]});audit('CONFIG','Sticker NFC del timbre grabado');toast('Sticker NFC grabado')}catch(e){toast('NFC: '+e.message)}},
+ async qrcopy(){try{await navigator.clipboard.writeText(qrUrl());toast('Enlace copiado')}catch(_){toast('No se pudo copiar')}},
+ qropen(){window.open(qrUrl(),'_blank')},
+ async qrtest(){if(!S.qr.on)return toast('Activá el timbre por QR en este dispositivo');const ok=await fetch(ntBase()+'/'+encodeURIComponent(qrTopic()),{method:'POST',body:JSON.stringify({type:'ring',id:'prueba-'+now().toString(36),name:'Prueba',msg:AREAS[0]?AREAS[0].name:'',test:true})}).then(r=>r.ok).catch(()=>false);toast(ok?'Timbre de prueba enviado: en segundos suena en este dispositivo':'Sin internet: no se pudo enviar')},
+ qrregen(b){if(!b.dataset.arm){b.dataset.arm=1;b.textContent='¿Seguro? Hay que reimprimir el cartel';setTimeout(()=>admBody(),4000);return}S.qr.topic='';qrTopic();ctlKey='';startCtl();audit('CONFIG','Código del timbre por QR regenerado');admBody();toast('Código nuevo: reimprimí el cartel y regrabá el NFC')},
  pdel(b){PASSES=PASSES.filter(p=>p.code!==b.dataset.c);save();admBody()},
  async setduress(){const v=$('#newduress').value.trim();if(v.length!==S.pinLen||!/^\d+$/.test(v))return toast('Debe tener '+S.pinLen+' dígitos');const h=await sha(v);if(USERS.some(u=>u.pin===h))return toast('Coincide con un PIN normal: elegí otro');SEC.duress=h;SEC.fDuress=false;save();audit('CONFIG','PIN de coacción actualizado');$('#newduress').value='';toast('PIN de coacción guardado')},
  testvoice(){say('Hola, soy el asistente del portero de '+S.brand+'. ¿En qué te puedo ayudar?')},
@@ -3411,7 +3468,7 @@ if('speechSynthesis' in window)speechSynthesis.onvoiceschanged=()=>{};
 (async()=>{
   await ensureDefaults();
   build();paintBrand();tick();go('home');
-  window.__cnb={S:()=>S,go,openDoor,log:()=>LOG,schedActive,isEnabled,notify,flushQ,eyeAR,blinkDet,fdist,FACE:()=>FACE,pkOK,derToRaw};
+  window.__cnb={S:()=>S,qrUrl,go,openDoor,log:()=>LOG,schedActive,isEnabled,notify,flushQ,eyeAR,blinkDet,fdist,FACE:()=>FACE,pkOK,derToRaw};
 })();
 })();
 </script>
