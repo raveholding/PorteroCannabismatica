@@ -76,7 +76,7 @@ main{flex:1;min-height:0;position:relative}
 .tile.main .ic{color:var(--ink);width:48px;height:48px}
 .tile.main small{color:rgba(11,14,9,.7)}
 .tile.main b{font-size:26px}
-.tile.main,.tile.sos{justify-content:flex-start}
+.tile.main,.tile.sos,.tile[data-act=staff]{justify-content:flex-start}
 .tile.sos{border-color:rgba(217,45,75,.55);background:linear-gradient(160deg,rgba(217,45,75,.14),var(--card))}
 .tile.sos .ic{color:#ff6b86}
 .tile[disabled]{opacity:.45}
@@ -120,6 +120,7 @@ footer.ft a{color:var(--mut);text-decoration:none;border-bottom:1px dotted var(-
 .areas{display:grid;gap:10px}
 .area{display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:18px;border:1px solid var(--line);background:var(--card2);min-height:64px;text-align:left;width:100%}
 .area:active{border-color:var(--y);background:#1a2115}
+.area[disabled]{opacity:.45;pointer-events:none}
 .area .ic{color:var(--y);width:28px;height:28px}
 .area b{display:block;font-size:17px}.area small{color:var(--mut)}
 .call{text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;padding:10px 0}
@@ -2545,6 +2546,8 @@ const P={ // iconos
  sofa:'<path d="M3 11V8a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v3M2 17v-4a2 2 0 0 1 4 0v2h12v-2a2 2 0 0 1 4 0v4zM5 17v2M19 17v2"/>',
  trash:'<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
  plus:'<path d="M12 5v14M5 12h14"/>',
+ finger:'<path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"/>',
+ face:'<circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M8.5 15c1 1.2 2.2 1.8 3.5 1.8s2.5-.6 3.5-1.8"/>',
  wifi:'<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M2 9a15 15 0 0 1 20 0M12 20h.01"/>'
 };
 const ic=(n,c='')=>`<svg class="ic ${c}" viewBox="0 0 24 24" aria-hidden="true">${P[n]||''}</svg>`;
@@ -2562,12 +2565,14 @@ const DEF={
   emNum:'911', trustName:'', trustNum:'',
   voice:{on:true,wake:'portero',wakeReq:false,uri:'',rate:1,tts:true},
   chime:'campana', sound:true,
+  bio:{pk:{on:false},face:{on:false,thr:0.5,live:true,tl:15}},
   notif:{ntfy:{on:false,server:'https://ntfy.sh',topic:''},wa:{on:false},recips:[],ev:{bell:true,sos:true,duress:true,lock:true,off:false}}
 };
 if(LS.get('cnb_ver',0)!==2){['cnb_set','cnb_sec','cnb_users','cnb_areas','cnb_pass','cnb_log','cnb_fail'].forEach(k=>{try{localStorage.removeItem(k)}catch(_){}});LS.set('cnb_ver',2)}
 let S=Object.assign({},DEF,LS.get('cnb_set',{}));
 S.sched=JSON.parse(JSON.stringify(Object.assign({},DEF.sched,S.sched||{}))); S.voice=Object.assign({},DEF.voice,S.voice||{});
 S.notif=JSON.parse(JSON.stringify(Object.assign({},DEF.notif,S.notif||{})));S.notif.ntfy=Object.assign({},DEF.notif.ntfy,S.notif.ntfy);S.notif.wa=Object.assign({},DEF.notif.wa,S.notif.wa);S.notif.ev=Object.assign({},DEF.notif.ev,S.notif.ev);S.notif.recips=S.notif.recips||[];
+S.bio=JSON.parse(JSON.stringify(Object.assign({},DEF.bio,S.bio||{})));S.bio.pk=Object.assign({},DEF.bio.pk,S.bio.pk);S.bio.face=Object.assign({},DEF.bio.face,S.bio.face);
 let SEC=LS.get('cnb_sec',null);   // {admin,duress}
 let USERS=LS.get('cnb_users',null);
 let AREAS=LS.get('cnb_areas',null);
@@ -2623,6 +2628,7 @@ const ov=(html)=>{const o=$('#ov');if(html==null){o.classList.remove('on');o.inn
 let VIEW='home',idleT=null,nfcCtl=null;
 function go(v,arg){
   if(VIEW==='nfc'&&v!=='nfc'&&nfcCtl){try{nfcCtl.abort()}catch(_){}}
+  if(VIEW==='face'&&v!=='face')stopFace();
   VIEW=v;$$('.view').forEach(x=>x.classList.remove('on'));
   const el=$('#v_'+v);if(el){el.classList.add('on');(R[v]||(()=>{}))(el,arg)}
   resetIdle();$('#ft').style.display=v==='admin'?'none':'';
@@ -2705,6 +2711,141 @@ async function notify(kind,o){
 }
 async function flushQ(){const q=NQ();if(!q.length)return;const keep=[];for(const j of q){if(now()-j.ts>15*60000)continue;if(!(await runJob(j)))keep.push(j)}setNQ(keep)}
 setInterval(flushQ,30000);addEventListener('online',flushQ);
+/* ====================== biometría del personal (huella por passkey y rostro) ====================== */
+const BIO_ROLES=['Personal','Profesional'];
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const b64u={enc:b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''),dec:s=>{s=String(s).replace(/-/g,'+').replace(/_/g,'/');s+='='.repeat((4-s.length%4)%4);return Uint8Array.from(atob(s),c=>c.charCodeAt(0))}};
+const pkOK=()=>!!(window.PublicKeyCredential&&navigator.credentials&&window.isSecureContext);
+const hasPk=u=>(u.pk||[]).length>0, hasFace=u=>!!(u.face&&u.face.d&&u.face.d.length);
+const bioUsers=()=>USERS.filter(u=>u.on&&BIO_ROLES.includes(u.role));
+
+/* --- huella / biometría del dispositivo: WebAuthn (la app nunca ve la huella, solo una firma) --- */
+async function pkRegister(u,attach){
+  const ch=crypto.getRandomValues(new Uint8Array(32));
+  const cred=await navigator.credentials.create({publicKey:{
+    rp:{name:S.brand,id:location.hostname},
+    user:{id:new TextEncoder().encode(u.id),name:u.name,displayName:u.name},
+    challenge:ch,pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+    excludeCredentials:(u.pk||[]).map(k=>({type:'public-key',id:b64u.dec(k.id)})),
+    authenticatorSelection:{authenticatorAttachment:attach,residentKey:'required',requireResidentKey:true,userVerification:'required'},
+    attestation:'none',timeout:120000}});
+  const r=cred.response,pub=r.getPublicKey&&r.getPublicKey();
+  if(!pub)throw new Error('Este navegador no permite leer la clave pública');
+  u.pk=(u.pk||[]).concat({id:b64u.enc(cred.rawId),pub:b64u.enc(pub),alg:r.getPublicKeyAlgorithm?r.getPublicKeyAlgorithm():-7,kind:attach==='platform'?'Dispositivo':'Celular',ts:now()});
+}
+function derToRaw(d){
+  let o=2;if(d[1]&0x80)o+=d[1]&0x7f;
+  const rl=d[o+1],r=d.slice(o+2,o+2+rl);o=o+2+rl;const sl=d[o+1],s=d.slice(o+2,o+2+sl);
+  const fix=x=>{while(x.length>32&&x[0]===0)x=x.slice(1);const out=new Uint8Array(32);out.set(x,32-x.length);return out};
+  const raw=new Uint8Array(64);raw.set(fix(r),0);raw.set(fix(s),32);return raw;
+}
+async function verifyAssertion(a,ch,k){
+  try{
+    const r=a.response,cd=JSON.parse(new TextDecoder().decode(r.clientDataJSON));
+    if(cd.type!=='webauthn.get'||cd.challenge!==b64u.enc(ch)||cd.origin!==location.origin)return false;
+    const ad=new Uint8Array(r.authenticatorData);
+    const rp=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(location.hostname)));
+    for(let i=0;i<32;i++)if(ad[i]!==rp[i])return false;
+    if(!(ad[32]&1)||!(ad[32]&4))return false;               // presencia y verificación biométrica obligatorias
+    const h=new Uint8Array(await crypto.subtle.digest('SHA-256',r.clientDataJSON));
+    const data=new Uint8Array(ad.length+32);data.set(ad);data.set(h,ad.length);
+    const spki=b64u.dec(k.pub),sig=new Uint8Array(r.signature);
+    if(k.alg===-7){const key=await crypto.subtle.importKey('spki',spki,{name:'ECDSA',namedCurve:'P-256'},false,['verify']);return await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},key,derToRaw(sig),data)}
+    const key=await crypto.subtle.importKey('spki',spki,{name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'},false,['verify']);
+    return await crypto.subtle.verify('RSASSA-PKCS1-v1_5',key,sig,data);
+  }catch(_){return false}
+}
+async function pkLogin(){
+  const ch=crypto.getRandomValues(new Uint8Array(32));
+  const a=await navigator.credentials.get({publicKey:{challenge:ch,rpId:location.hostname,userVerification:'required',timeout:60000}});
+  const id=b64u.enc(a.rawId),u=USERS.find(x=>(x.pk||[]).some(k=>k.id===id));
+  if(!u)return {err:'Passkey no registrada'};
+  return (await verifyAssertion(a,ch,u.pk.find(k=>k.id===id)))?{u}:{err:'Firma inválida'};
+}
+function bioFail(msg,type){
+  FAIL.n++;audit(type,msg+' (intento #'+FAIL.n+')');
+  const max=S.mode==='corp'?Math.min(3,S.maxFails):S.maxFails;
+  if(FAIL.n>=max){const sec=S.mode==='corp'?Math.max(60,S.lockSec):S.lockSec;FAIL={n:0,until:now()+sec*1000};audit('LOCKOUT','Bloqueo '+sec+' s por intentos fallidos',' ',true);notify('lock',{title:'⚠️ Intentos fallidos · '+S.brand,body:'El portero se bloqueó por demasiados intentos ('+hhmm()+').',prio:4});msg='Demasiados intentos: bloqueado '+sec+' s'}
+  LS.set('cnb_fail',FAIL);sfx.bad();toast(msg,3500);
+}
+function finishBio(u,via){
+  if(!u.on||!BIO_ROLES.includes(u.role)){audit('BIO_FAIL','Persona no habilitada · '+u.name,u.name);sfx.bad();return toast('Persona no habilitada para ingreso biométrico')}
+  if(offBlocked(u)){audit('OFFHOURS_DENIED',via+' fuera de servicio · '+u.name,u.name);sfx.bad();return toast('Portero fuera de servicio')}
+  FAIL={n:0,until:0};LS.set('cnb_fail',FAIL);openDoor(u.name,via);
+}
+async function staffPk(){
+  if(!pkOK())return toast('La huella requiere abrir el portero por HTTPS',3500);
+  if(lockLeft()>0)return toast('Bloqueado '+lockLeft()+' s');
+  let res;
+  try{res=await pkLogin()}catch(e){return toast(e&&e.name==='NotAllowedError'?'Cancelado o tiempo agotado':'No se pudo leer la huella: '+(e.message||e.name),3500)}
+  if(!res.u)return bioFail('Huella no reconocida','BIO_FAIL');
+  finishBio(res.u,'Huella (passkey)');
+}
+
+/* --- reconocimiento facial en el dispositivo (face-api, carga diferida desde face/) --- */
+let FA=null;const FACE={run:0,st:null};
+async function faceLoad(){
+  if(FA)return FA;
+  if(!window.faceapi)await new Promise((res,rej)=>{const s=document.createElement('script');s.src='face/face-api.js';s.onload=res;s.onerror=()=>rej(new Error('Falta la carpeta face/ junto al index.html'));document.head.appendChild(s)});
+  const f=window.faceapi;await f.tf.ready();
+  try{await Promise.all([f.nets.tinyFaceDetector.loadFromUri('face/model'),f.nets.faceLandmark68TinyNet.loadFromUri('face/model'),f.nets.faceRecognitionNet.loadFromUri('face/model')])}
+  catch(_){throw new Error('No se pudieron cargar los modelos de la carpeta face/model')}
+  return FA=f;
+}
+async function camStart(v){
+  const st=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+  FACE.st=st;v.srcObject=st;await v.play();return st;
+}
+function stopFace(){FACE.run++;if(FACE.st){FACE.st.getTracks().forEach(t=>t.stop());FACE.st=null}}
+const fOpts=()=>new FA.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:0.5});
+const fdist=(a,b)=>{let s=0;for(let i=0;i<a.length;i++){const d=a[i]-b[i];s+=d*d}return Math.sqrt(s)};
+function eyeAR(lm){const p=lm.positions,d=(a,b)=>Math.hypot(p[a].x-p[b].x,p[a].y-p[b].y);const e=i=>(d(i+1,i+5)+d(i+2,i+4))/(2*d(i,i+3));return (e(36)+e(42))/2}
+function blinkDet(){const hist=[];let low=false;return ear=>{hist.push(ear);if(hist.length>20)hist.shift();const base=Math.max(...hist);if(base<0.12)return false;if(!low&&ear<base*0.72){low=true;return false}if(low&&ear>base*0.88){low=false;return true}return false}}
+const fset=t=>{const e=$('#fstat');if(e)e.textContent=t};
+async function faceEnroll(u){
+  ov(`<div class="box"><h2>Registrar rostro</h2><p>${esc(u.name)}</p><p id="fstat">Cargando…</p><video id="fvid" playsinline muted autoplay style="width:100%;max-width:420px;border-radius:20px;transform:scaleX(-1);background:#000"></video><button class="btn" data-act="fcancel">Cancelar</button></div>`);
+  const run=++FACE.run;
+  try{
+    const f=await faceLoad();const v=$('#fvid');await camStart(v);
+    const out=[],t0=now();let lastAt=0;
+    while(FACE.run===run&&out.length<5&&now()-t0<45000){
+      const d=await f.detectSingleFace(v,fOpts()).withFaceLandmarks(true).withFaceDescriptor();
+      if(FACE.run!==run)return;
+      if(d&&d.detection.score>0.7&&d.detection.box.width/v.videoWidth>0.2&&now()-lastAt>600){out.push(Array.from(d.descriptor).map(x=>+x.toFixed(4)));lastAt=now();fset('Capturando '+out.length+' de 5… movés apenas la cabeza')}
+      else if(!d)fset('Ubicá el rostro frente a la cámara, con buena luz');
+      await sleep(120);
+    }
+    if(FACE.run!==run)return;
+    stopFace();
+    if(out.length<5){ov(null);return toast('No se pudo capturar el rostro. Probá con más luz.',3500)}
+    u.face={d:out,ts:now()};save();audit('BIO_ENROLL','Rostro registrado · '+u.name,u.name);ov(null);admBody();toast('Rostro registrado');
+  }catch(e){stopFace();ov(null);toast('Rostro: '+(e.message||e.name),4500)}
+}
+async function faceRecognize(){
+  const run=++FACE.run,B=S.bio.face;
+  try{
+    const f=await faceLoad();if(FACE.run!==run)return;
+    const v=$('#fvid');await camStart(v);if(FACE.run!==run)return;
+    const cands=bioUsers().filter(hasFace),t0=now(),TL=(B.tl||15)*1000,det=blinkDet();
+    let streak=0,last=null,blinked=!B.live,seen=0,matched=false;
+    fset(B.live?'Mirá a la cámara y parpadeá una vez':'Mirá a la cámara');
+    while(FACE.run===run&&VIEW==='face'&&now()-t0<TL){
+      const d=await f.detectSingleFace(v,fOpts()).withFaceLandmarks(true).withFaceDescriptor();
+      if(FACE.run!==run)return;
+      if(!d){streak=0;last=null;await sleep(100);continue}
+      seen++;
+      if(B.live&&!blinked&&det(eyeAR(d.landmarks)))blinked=true;
+      let best=null;for(const u of cands){const m=Math.min(...u.face.d.map(x=>fdist(x,d.descriptor)));if(!best||m<best.m)best={u,m}}FACE.m=best?best.m:null;
+      if(best&&best.m<B.thr){if(last===best.u.id)streak++;else{last=best.u.id;streak=1}}else{streak=0;last=null}
+      if(streak>=3)matched=true;
+      if(streak>=3&&blinked){stopFace();return finishBio(best.u,'Rostro')}
+      fset(streak>=3?'Parpadeá para confirmar':best&&best.m<B.thr?'Verificando…':'Mirá a la cámara');
+      await sleep(60);
+    }
+    if(FACE.run===run){stopFace();bioFail(matched&&!blinked?'No se detectó parpadeo (posible foto)':seen>3?'Rostro no reconocido':'No se detectó ningún rostro','BIO_FAIL');if(VIEW==='face')go('staff')}
+  }catch(e){stopFace();fset('Error: '+(e.message||e.name));toast('Rostro: '+(e.message||e.name),4500)}
+}
+
 function openDoor(who,via,opt={}){
   const ms=S.relayMs;
   if(opt.silent){audit('CRITICAL_DURESS_EVENT','PIN de coacción utilizado en el portero','—',true);webhook({event:'CRITICAL_DURESS_EVENT',brand:S.brand,ts:now()});notify('duress',{title:'🚨 Alerta silenciosa · '+S.brand,body:'Se usó el PIN de coacción en el portero ('+hhmm()+'). Verificar de inmediato.',prio:5});fireRelay(ms,true)}
@@ -2774,6 +2915,19 @@ const R={
      <button class="btn" style="min-height:76px;font-size:19px" data-act="sosfam" ${S.trustNum?'':'disabled'}>${ic('users')} ${S.trustNum?'Llamar a '+esc(S.trustName||'contacto de confianza'):'Contacto de confianza (sin configurar)'}</button>
      <div class="msg">Se registra el evento en el Log de Auditoría. Este portero no usa cámaras.</div></div>`;
  },
+ staff(el){
+   const pkRdy=S.bio.pk.on&&bioUsers().some(hasPk),faRdy=S.bio.face.on&&bioUsers().some(hasFace);
+   el.innerHTML=`<div class="panel"><div class="ph"><div><h2>Personal autorizado</h2><p>Solo para personas registradas previamente por el administrador.</p></div><button class="back" data-act="home">${ic('back')} Volver</button></div>
+    ${S.bio.pk.on?`<button class="area" data-act="staffpk" ${pkOK()&&pkRdy?'':'disabled'}>${ic('finger')}<span><b>Huella o biometría del celular</b><small>${!pkOK()?'Requiere abrir el portero por HTTPS':pkRdy?'Se verifica en tu dispositivo: el portero no ve tu huella':'Todavía no hay huellas registradas'}</small></span></button>`:''}
+    ${S.bio.face.on?`<button class="area" data-act="staffface" ${faRdy?'':'disabled'}>${ic('face')}<span><b>Reconocimiento facial</b><small>${faRdy?'La cámara se enciende solo ahora. No se guardan fotos.':'Todavía no hay rostros registrados'}</small></span></button>`:''}
+    ${(S.bio.pk.on||S.bio.face.on)?'':'<p class="mut">El ingreso biométrico no está activado.</p>'}</div>`;
+ },
+ face(el){
+   el.innerHTML=`<div class="panel"><div class="ph"><div><h2>Reconocimiento facial</h2><p id="fstat">Cargando…</p></div><button class="back" data-act="staff">${ic('back')} Volver</button></div>
+    <video id="fvid" playsinline muted autoplay style="width:100%;border-radius:20px;transform:scaleX(-1);background:#000;max-height:52vh"></video>
+    <p class="mut" style="margin:0">La imagen se procesa en este dispositivo y no se guarda.</p></div>`;
+   faceRecognize();
+ },
  admin(el){renderAdmin(el)}
 };
 
@@ -2786,16 +2940,20 @@ function build(){
   <section class="view" id="v_pass"></section>
   <section class="view" id="v_nfc"></section>
   <section class="view" id="v_sos"></section>
+  <section class="view" id="v_staff"></section>
+  <section class="view" id="v_face"></section>
   <section class="view" id="v_admin"></section>`;
   const nfcOK='NDEFReader' in window;
   const en=isEnabled(),dis=en?'':'disabled',pinDis=(en||S.offStaff)?'':'disabled';
+  const staffOn=S.bio.pk.on||S.bio.face.on,camOn=S.bio.face.on&&USERS.some(hasFace);
+  const staffTile=staffOn?`<button class="tile" data-act="staff" ${pinDis} style="grid-column:1/-1;flex-direction:row;align-items:center;gap:14px;min-height:76px">${ic('finger')}<span><b>Personal autorizado</b><small>Huella o rostro, previamente registrados</small></span></button>`:'';
   $('#v_home').innerHTML=`
    <div class="hero">
      <div><div class="big"><img alt="" src="${esc(S.logo||LOGO)}"></div>
        <h1>${heroTitle()}</h1><p>${esc(S.tagline)}</p></div>
      <div>
        ${en?'':`<div class="offb">${ic('clock')}<span><b>Portero fuera de servicio</b><small>Habilitado: ${esc(hoursTxt())}.${S.offStaff?' El personal puede ingresar con su PIN.':''} La emergencia siempre está disponible.</small></span></div>`}
-       <div class="pill">${ic('shield')} Sin cámaras · tu privacidad primero</div>
+       <div class="pill">${ic('shield')} ${camOn?'Cámara solo para personal registrado · no se guardan fotos':'Sin cámaras · tu privacidad primero'}</div>
        <div class="infos">
          <div class="info">${ic('clock')}<span><b>${esc(hoursTxt())}</b></span></div>
          <div class="info">${ic('pin')}<span><b>${esc(S.addr)}</b></span></div>
@@ -2808,10 +2966,10 @@ function build(){
      <button class="tile" data-act="pass" ${dis}>${ic('ticket')}<span><b>Tengo un pase</b><small>Código de visita</small></span></button>
      <button class="tile" data-act="nfc" ${dis}>${ic('nfc')}<span><b>Tarjeta NFC</b><small>${nfcOK?'Acercá tu tarjeta':'Según dispositivo'}</small></span></button>
      <button class="tile" data-act="voice" ${(en&&S.voice.on)?'':'disabled'}>${ic('mic')}<span><b>Asistente de voz</b><small>“Abrir puerta”, “Horarios”…</small></span></button>
-     <button class="tile sos" data-act="sos" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:14px;min-height:84px">${ic('sos')}<span><b>Emergencia</b><small>Llamar al ${esc(S.emNum||'911')} o a un contacto de confianza</small></span></button>
+     ${staffTile}<button class="tile sos" data-act="sos" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:14px;min-height:84px">${ic('sos')}<span><b>Emergencia</b><small>Llamar al ${esc(S.emNum||'911')} o a un contacto de confianza</small></span></button>
    </div>
    `;
-  $('#ft').innerHTML=svbBanner()+`<span>Portero Digital SVB · v1.0</span>`;
+  $('#ft').innerHTML=svbBanner()+`<span>Portero Digital SVB · v1.1</span>`;
   deskBar();
 }
 const svbBanner=()=>`<div class="svb"><div class="mk">S<i>V</i>B</div>
@@ -2970,6 +3128,10 @@ function handleVoice(raw,fromText){
 /* ====================== acciones (delegación) ====================== */
 const A={
  home(){stopBell();go('home')},
+ staff(){go('staff')},
+ staffpk(){staffPk()},
+ staffface(){go('face')},
+ fcancel(){stopFace();ov(null)},
  fs(){desk('fullscreen');try{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}catch(_){}},
  dmin(){desk('minimize')},dclose(){desk('close')},
  bell(){if(!isEnabled())return toast('Portero fuera de servicio');go('bell')},
@@ -3015,7 +3177,7 @@ const scan={b:'',t:0};
 
 /* ====================== ADMIN ====================== */
 let TAB='general',PWA=null;
-const TABS=[['general','General','gear'],['horarios','Horarios','cal'],['personas','Accesos','users'],['areas','Áreas y timbres','bell'],['pases','Pases de visita','ticket'],['emerg','Emergencias','sos'],['avisos','Avisos al celular','bell'],['voz','Asistente de voz','mic'],['rele','Relé y puerta','plug'],['nfcqr','NFC y QR','nfc'],['integ','Firmware e integración','cpu'],['audit','Auditoría','list'],['dev','Soporte y desarrollador','shield']];
+const TABS=[['general','General','gear'],['horarios','Horarios','cal'],['personas','Accesos','users'],['areas','Áreas y timbres','bell'],['pases','Pases de visita','ticket'],['emerg','Emergencias','sos'],['avisos','Avisos al celular','bell'],['bio','Huella y rostro','finger'],['voz','Asistente de voz','mic'],['rele','Relé y puerta','plug'],['nfcqr','NFC y QR','nfc'],['integ','Firmware e integración','cpu'],['audit','Auditoría','list'],['dev','Soporte y desarrollador','shield']];
 function renderAdmin(el){
   el.innerHTML=`<div class="adm"><nav>
     ${TABS.map(t=>`<button data-act="tab" data-t="${t[0]}" class="${TAB===t[0]?'on':''}">${ic(t[2])}${t[1]}</button>`).join('')}
@@ -3023,10 +3185,16 @@ function renderAdmin(el){
   </nav><div class="body" id="admbody"></div></div>`;
   admBody();
 }
-function admBody(){const b=$('#admbody');if(!b)return;b.innerHTML=(AT[TAB]||(()=>''))();bindAdm(b);if(TAB==='pases'||TAB==='avisos')paintQRs()}
+async function checkFace(){const e=$('#fastat');if(!e)return;try{const r=await fetch('face/model/face_recognition_model-weights_manifest.json',{cache:'no-store'});e.className='tag '+(r.ok?'ok':'bad');e.textContent=r.ok?'Modelo disponible':'Falta la carpeta face/'}catch(_){e.className='tag bad';e.textContent='Falta la carpeta face/ (o se abrió como archivo local)'}}
+function admBody(){const b=$('#admbody');if(!b)return;b.innerHTML=(AT[TAB]||(()=>''))();bindAdm(b);if(TAB==='bio')checkFace();if(TAB==='pases'||TAB==='avisos')paintQRs()}
 const fld=(label,key,type='text',extra='')=>{const v=key.split('.').reduce((o,k)=>o&&o[k],S);return `<div><label>${label}</label><input data-bind="${key}" type="${type}" value="${esc(v)}" ${extra}></div>`};
 const sw=(label,key)=>{const v=key.split('.').reduce((o,k)=>o&&o[k],S);return `<div class="sw"><span>${label}</span><input type="checkbox" data-bind="${key}" ${v?'checked':''}></div>`};
 const setupItems=()=>[['Cambiar el PIN de administrador de fábrica',!SEC.fAdmin,'general'],['Cambiar el PIN de coacción de fábrica',!SEC.fDuress,'emerg'],['Cargar al menos una persona con PIN',USERS.some(u=>u.pin),'personas'],['Cargar el WhatsApp de aviso de las áreas',AREAS.some(a=>a.wa),'areas'],['Cargar el contacto de confianza para emergencias',!!S.trustNum,'emerg'],['Activar avisos al celular (push o WhatsApp)',(S.notif.ntfy.on&&!!S.notif.ntfy.topic)||(S.notif.wa.on&&S.notif.recips.some(r=>r.phone&&r.key)),'avisos']];
+const bioCard=u=>{if(!BIO_ROLES.includes(u.role))return '';const ok=!!u.consent,dis=ok?'':'disabled',fd=t=>new Date(t).toLocaleDateString('es-AR');
+ return `<div class="card" style="margin:12px 0 0"><b>Ingreso biométrico</b>
+  <label style="display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--tx)"><input type="checkbox" data-uconsent ${ok?'checked':''}>La persona dio su consentimiento informado y por escrito</label>
+  <div class="row"><button class="btn sm" data-act="pkreg" data-k="phone" data-id="${u.id}" ${dis}>${ic('finger')} Huella con su celular</button><button class="btn sm" data-act="pkreg" data-k="platform" data-id="${u.id}" ${dis}>${ic('finger')} Huella de este dispositivo</button><button class="btn sm" data-act="facereg" data-id="${u.id}" ${dis}>${ic('face')} Registrar rostro</button></div>
+  <div class="row" style="margin-top:8px">${(u.pk||[]).map(k=>`<span class="tag ok">Huella · ${k.kind} · ${fd(k.ts)} <button data-act="pkdel" data-id="${u.id}" data-cid="${k.id}" aria-label="Quitar huella" style="color:inherit;padding:0 4px">✕</button></span>`).join('')}${hasFace(u)?`<span class="tag ok">Rostro · ${fd(u.face.ts)} <button data-act="facedel" data-id="${u.id}" aria-label="Quitar rostro" style="color:inherit;padding:0 4px">✕</button></span>`:''}</div></div>`};
 const AT={
  general(){const si=setupItems(),dn=si.filter(x=>x[1]).length;return `<h3>General</h3><p class="sub">Marca, horarios y modo de operación.</p>
   ${dn<si.length?`<div class="card" style="border-color:rgba(168,230,0,.5)"><b>Puesta en marcha · ${dn} de ${si.length}</b>${si.map(x=>`<div class="row" style="justify-content:space-between;padding:6px 0"><span>${x[1]?'✔':'○'} ${x[0]}</span>${x[1]?'':x[2]==='general'?'<span class="mut">más abajo</span>':`<button class="btn sm" data-act="tab" data-t="${x[2]}">Ir</button>`}</div>`).join('')}</div>`:''}
@@ -3047,13 +3215,13 @@ const AT={
   <div class="card" style="${on?'':'opacity:.5'}"><div class="row" style="margin-bottom:8px"><button class="btn sm" data-act="copymon">Copiar lunes a martes–viernes</button><button class="btn sm" data-act="copyall">Copiar lunes a todos los días</button></div>
   ${order.map(d=>{const l=S.sched[d]||[];return `<div class="row" style="padding:8px 0;border-top:1px solid var(--line)"><b style="width:46px">${DAYN[d]}</b><div class="row" style="flex:1">${l.length?l.map((r,i)=>`<span class="row" style="gap:6px;flex-wrap:nowrap">${r.from===r.to?'<span class="tag ok">24 h</span>':''}<input type="time" data-rf="${d}:${i}:from" value="${esc(r.from)}" style="width:156px"> a <input type="time" data-rf="${d}:${i}:to" value="${esc(r.to)}" style="width:156px"><button class="btn sm ghost" data-act="rdel" data-d="${d}" data-i="${i}" aria-label="Quitar franja">${ic('x')}</button></span>`).join(''):'<span class="mut">Cerrado</span>'}</div><button class="btn sm" data-act="radd" data-d="${d}">${ic('plus')} Franja</button><button class="btn sm ghost" data-act="r24" data-d="${d}">24 h</button></div>`}).join('')}
   <p class="mut" style="margin:10px 0 0">Si “hasta” es menor o igual que “desde”, la franja cruza la medianoche (ej. 22:00 a 06:00). 00:00 a 00:00 equivale a 24 h.</p></div>`},
- personas(){return `<h3>Accesos por PIN y NFC</h3><p class="sub">Socios y personal habilitados. Los PIN se guardan cifrados (hash). Largo requerido: ${S.pinLen} dígitos.</p>
+ personas(){return `<h3>Accesos por PIN, NFC, huella y rostro</h3><p class="sub">Socios y personal habilitados. Los PIN se guardan cifrados (hash). Largo requerido: ${S.pinLen} dígitos.</p>
   ${USERS.map(u=>`<div class="card" data-u="${u.id}"><div class="grid2">
     <div><label>Nombre</label><input data-uf="name" value="${esc(u.name)}"></div>
     <div><label>Rol</label><select data-uf="role">${['Socio','Personal','Profesional','Proveedor'].map(r=>`<option ${u.role===r?'selected':''}>${r}</option>`).join('')}</select></div>
     <div><label>Nuevo PIN</label><div class="row" style="flex-wrap:nowrap"><input type="password" inputmode="numeric" maxlength="${S.pinLen}" data-upin placeholder="${S.pinLen} dígitos"><button class="btn sm y" data-act="usetpin" data-id="${u.id}">Guardar</button></div></div>
     <div><label>Tarjeta NFC ${u.nfc?'· vinculada':''}</label><div class="row" style="flex-wrap:nowrap"><input value="${esc(u.nfc)}" data-uf="nfc" placeholder="Serie de la tarjeta"><button class="btn sm" data-act="ulink" data-id="${u.id}">Leer</button></div></div></div>
-    <div class="row" style="justify-content:space-between;margin-top:10px"><label style="display:flex;gap:8px;align-items:center;margin:0"><input type="checkbox" data-uf="on" ${u.on?'checked':''}>Habilitado</label><button class="btn sm bad" data-act="udel" data-id="${u.id}">${ic('trash')} Eliminar</button></div></div>`).join('')}
+    ${bioCard(u)}<div class="row" style="justify-content:space-between;margin-top:10px"><label style="display:flex;gap:8px;align-items:center;margin:0"><input type="checkbox" data-uf="on" ${u.on?'checked':''}>Habilitado</label><button class="btn sm bad" data-act="udel" data-id="${u.id}">${ic('trash')} Eliminar</button></div></div>`).join('')}
   <button class="btn y" data-act="uadd">${ic('plus')} Agregar persona</button>`},
  areas(){return `<h3>Áreas y timbres</h3><p class="sub">Cada área puede tener su WhatsApp de aviso y su propio timbre.</p>
   <div class="card"><label>Timbre por defecto</label><div class="row"><select data-bind="chime" style="flex:1">${Object.entries(CHIMES).map(([k,c])=>`<option value="${k}" ${S.chime===k?'selected':''}>${c.n}</option>`).join('')}</select>
@@ -3093,6 +3261,17 @@ const AT={
    ${N.recips.map(r=>`<div class="card" data-r="${r.id}"><div class="grid2"><div><label>Nombre</label><input data-rf2="name" value="${esc(r.name)}"></div><div><label>Teléfono (ej. 5493874000000)</label><input data-rf2="phone" inputmode="tel" value="${esc(r.phone)}"></div><div><label>Apikey de CallMeBot</label><input data-rf2="key" value="${esc(r.key)}" autocomplete="off"></div><div><label>Recibe avisos de</label><select data-rf2="area"><option value="">Todas las áreas</option>${AREAS.map(a=>`<option value="${a.id}" ${r.area===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select></div></div><div class="row" style="justify-content:space-between;margin-top:10px"><button class="btn sm y" data-act="watest" data-id="${r.id}">Enviar prueba</button><button class="btn sm bad" data-act="wadel" data-id="${r.id}">${ic('trash')} Quitar</button></div></div>`).join('')}
    <button class="btn y" data-act="waadd">${ic('plus')} Agregar destinatario</button></div>
   <div class="card"><b>Qué se avisa</b>${sw('Timbre (visita en la puerta)','notif.ev.bell')}${sw('Emergencia (botón 911 o contacto)','notif.ev.sos')}${sw('Alerta silenciosa (PIN de coacción)','notif.ev.duress')}${sw('Bloqueo por intentos fallidos','notif.ev.lock')}${sw('Intentos fuera de horario','notif.ev.off')}</div>`},
+ bio(){const B=S.bio,np=USERS.filter(hasPk).length,nf=USERS.filter(hasFace).length;return `<h3>Huella y rostro del personal</h3><p class="sub">Ingreso opcional para personal autorizado (roles Personal y Profesional) registrado previamente desde Accesos. Desactivado de fábrica.</p>
+  <div class="card"><b>Huella o biometría del celular (passkeys)</b> ${pkOK()?'<span class="tag ok">Disponible</span>':'<span class="tag bad">Requiere HTTPS</span>'}
+   <p class="mut">La huella se verifica en el celular o en el sensor del dispositivo: el portero no la ve ni la guarda, solo recibe una firma. Cada persona puede registrar su propio celular (escaneando un QR) o la huella de este dispositivo.</p>
+   ${sw('Permitir ingreso con huella','bio.pk.on')}<p class="mut" style="margin:0">Personas con huella registrada: ${np}.</p>
+   ${pkOK()?'':'<p class="mut">Abrí el portero desde su dirección web (https://…), por ejemplo en GitHub Pages: no funciona desde un archivo local. Si cambia la dirección web hay que volver a registrar las huellas.</p>'}</div>
+  <div class="card"><b>Reconocimiento facial</b> <span id="fastat" class="tag">Verificando modelo…</span>
+   <p class="mut">La cámara se enciende solo cuando alguien toca “Reconocimiento facial”. No se guardan fotos ni videos: solo una plantilla numérica de cada persona registrada. Es menos seguro que la huella: un video de la persona podría engañarlo, por eso se exige un parpadeo.</p>
+   ${sw('Permitir ingreso con reconocimiento facial','bio.face.on')}${sw('Exigir parpadeo (anti-foto)','bio.face.live')}
+   <label>Exigencia de coincidencia: ${B.face.thr} <span class="mut">(más bajo = más estricto)</span></label><input type="range" data-bind="bio.face.thr" min="0.35" max="0.6" step="0.01" value="${B.face.thr}">
+   <p class="mut" style="margin:8px 0 0">Personas con rostro registrado: ${nf}.</p></div>
+  <div class="card"><b>Datos biométricos</b><p class="mut" style="margin:6px 0 0">Son datos personales sensibles. Registrá a cada persona solo con su consentimiento informado y por escrito (el panel lo marca y lo anota en la auditoría). Cada persona puede pedir que se borre su registro en cualquier momento desde Accesos. Las plantillas se guardan solo en este dispositivo.</p></div>`},
  voz(){const vs=voices();return `<h3>Asistente de voz</h3><p class="sub">Reconocimiento y síntesis nativos del navegador, sin APIs de pago.</p>
   ${sw('Asistente habilitado','voice.on')}${sw('Respuestas habladas','voice.tts')}${sw('Exigir palabra clave para ejecutar comandos','voice.wakeReq')}
   <div class="grid2">${fld('Palabra clave','voice.wake')}<div><label>Voz</label><select data-bind="voice.uri"><option value="">Automática (español)</option>${vs.map(v=>`<option value="${esc(v.voiceURI)}" ${S.voice.uri===v.voiceURI?'selected':''}>${esc(v.name)} (${esc(v.lang)})</option>`).join('')}</select></div>
@@ -3117,7 +3296,7 @@ const AT={
   <div class="card"><b>App móvil / PWA</b><p class="mut">Para instalarlo en tablet: servir este archivo por HTTPS junto con manifest y service worker, o empaquetarlo con Capacitor. En iOS: Compartir → Agregar a inicio.</p>
    <button class="btn sm y" data-act="pwa" ${PWA?'':'disabled'}>${PWA?'Instalar aplicación':'Instalación no disponible aquí'}</button></div>
   <div class="card"><p class="mut" style="margin:0">Sin cámaras no hace falta RTSP/ONVIF: la integración se limita a cerradura, timbre y avisos.</p></div>`},
- dev(){return `<h3>Soporte y desarrollador</h3><p class="sub">Datos de contacto para soporte, ajustes y nuevas funciones.</p>${svbBanner()}<div class="card"><b>Portero Digital SVB · v1.0</b><p class="mut" style="margin:6px 0 0">Cliente: ${esc(S.brand)}. Sin cámaras ni biometría. Datos guardados solo en este dispositivo.</p></div>`},
+ dev(){return `<h3>Soporte y desarrollador</h3><p class="sub">Datos de contacto para soporte, ajustes y nuevas funciones.</p>${svbBanner()}<div class="card"><b>Portero Digital SVB · v1.1</b><p class="mut" style="margin:6px 0 0">Cliente: ${esc(S.brand)}. Sin cámaras ni biometría. Datos guardados solo en este dispositivo.</p></div>`},
  audit(){const rows=LOG.slice().reverse();return `<h3>Log de auditoría</h3><p class="sub">${LOG.length} eventos guardados en este dispositivo (máx. 500).</p>
   <div class="row" style="margin-bottom:10px"><button class="btn sm" data-act="exjson">${ic('dl')} JSON</button><button class="btn sm" data-act="excsv">${ic('dl')} CSV</button><button class="btn sm bad" data-act="clrlog" id="clrlog">${ic('trash')} Vaciar</button></div>
   <div style="overflow:auto;max-height:62vh"><table><thead><tr><th>Fecha</th><th>Evento</th><th>Detalle</th></tr></thead><tbody>
@@ -3128,7 +3307,8 @@ function paintQRs(){$$('[data-qr]').forEach(e=>{try{const q=qrcode(0,'M');q.addD
 function bindAdm(b){
   $$('[data-bind]',b).forEach(i=>i.addEventListener('change',()=>cfg(i)));
   const r=$('#rms',b);r&&r.addEventListener('input',()=>{$('#rmsl').textContent=r.value+' ms'});
-  $$('[data-uf]',b).forEach(i=>i.addEventListener('change',()=>{const u=USERS.find(x=>x.id===i.closest('[data-u]').dataset.u);u[i.dataset.uf]=i.type==='checkbox'?i.checked:i.value.trim();save();audit('CONFIG','Persona editada: '+u.name)}));
+  $$('[data-uf]',b).forEach(i=>i.addEventListener('change',()=>{const u=USERS.find(x=>x.id===i.closest('[data-u]').dataset.u);u[i.dataset.uf]=i.type==='checkbox'?i.checked:i.value.trim();save();audit('CONFIG','Persona editada: '+u.name);if(i.dataset.uf==='role'){if(!BIO_ROLES.includes(u.role)&&(hasPk(u)||hasFace(u)||u.consent)){u.pk=[];u.face=null;u.consent=0;save();audit('BIO_DELETE','Biometría eliminada por cambio de rol · '+u.name,u.name)}admBody()}}));
+  $$('[data-uconsent]',b).forEach(i=>i.addEventListener('change',()=>{const u=USERS.find(x=>x.id===i.closest('[data-u]').dataset.u);u.consent=i.checked?now():0;if(!i.checked){u.pk=[];u.face=null;audit('BIO_DELETE','Consentimiento retirado: biometría eliminada · '+u.name,u.name)}save();audit('CONSENT',(i.checked?'Consentimiento biométrico registrado · ':'Consentimiento biométrico retirado · ')+u.name,u.name);admBody()}));
   $$('[data-af]',b).forEach(i=>i.addEventListener('change',()=>{const a=AREAS.find(x=>x.id===i.closest('[data-a]').dataset.a);a[i.dataset.af]=i.value.trim();save();audit('CONFIG','Área editada: '+a.name)}));
   $$('[data-rf]',b).forEach(i=>i.addEventListener('change',()=>{const[d,idx,k]=i.dataset.rf.split(':');S.sched[d][+idx][k]=i.value||'00:00';sv();admBody()}));
   $$('[data-rf2]',b).forEach(i=>i.addEventListener('change',()=>{const r=S.notif.recips.find(x=>x.id===i.closest('[data-r]').dataset.r);r[i.dataset.rf2]=i.value.trim();save();audit('CONFIG','Destinatario de avisos editado')}));
@@ -3139,13 +3319,20 @@ function cfg(i){
   const path=i.dataset.bind.split('.');let v=i.type==='checkbox'?i.checked:(i.type==='number'||i.type==='range')?Number(i.value):i.value.trim();
   if(i.dataset.bind==='pinLen')v=Math.min(6,Math.max(4,v||4));
   let o=S;path.slice(0,-1).forEach(k=>o=o[k]);o[path.at(-1)]=v;save();audit('CONFIG',i.dataset.bind+' actualizado');
-  if(['brand','sub','tagline','addr','mode','emNum','voice.on','enMode','offStaff'].includes(i.dataset.bind)){build();paintBrand()}
+  if(['brand','sub','tagline','addr','mode','emNum','voice.on','enMode','offStaff','bio.pk.on','bio.face.on'].includes(i.dataset.bind)){build();paintBrand()}
   if(i.dataset.bind==='enMode')admBody();
   if(i.dataset.bind==='pinLen'){toast('Largo de PIN cambiado: volvé a definir los PIN de cada persona y el de coacción.',4500);admBody()}
   tick();
 }
 const sv=()=>{save();audit('CONFIG','Horarios del portero actualizados');build();tick()};
 const ADM={
+ async pkreg(b){const u=USERS.find(x=>x.id===b.dataset.id),ph=b.dataset.k==='phone';if(!u||!u.consent)return toast('Registrá primero el consentimiento');if(!pkOK())return toast('Requiere abrir el portero por HTTPS (no desde un archivo local)',4500);
+   toast(ph?'Elegí “usar un celular o tablet” y escaneá el QR':'Poné el dedo en el sensor del dispositivo',5000);
+   try{await pkRegister(u,ph?'cross-platform':'platform');save();audit('BIO_ENROLL','Huella registrada ('+(ph?'celular':'dispositivo')+') · '+u.name,u.name);admBody();toast('Huella registrada')}
+   catch(e){toast(e&&e.name==='NotAllowedError'?'Cancelado o tiempo agotado':'No se pudo registrar: '+(e.message||e.name),4500)}},
+ pkdel(b){const u=USERS.find(x=>x.id===b.dataset.id);u.pk=(u.pk||[]).filter(k=>k.id!==b.dataset.cid);save();audit('BIO_DELETE','Huella eliminada · '+u.name,u.name);admBody()},
+ facereg(b){const u=USERS.find(x=>x.id===b.dataset.id);if(!u||!u.consent)return toast('Registrá primero el consentimiento');faceEnroll(u)},
+ facedel(b){const u=USERS.find(x=>x.id===b.dataset.id);u.face=null;save();audit('BIO_DELETE','Rostro eliminado · '+u.name,u.name);admBody()},
  ntfygen(){const a=crypto.getRandomValues(new Uint8Array(12));S.notif.ntfy.topic='cannabismatica-'+[...a].map(x=>x.toString(16).padStart(2,'0')).join('');S.notif.ntfy.on=true;save();audit('CONFIG','Tema push generado');admBody()},
  async ntfycopy(){try{await navigator.clipboard.writeText(S.notif.ntfy.topic||'');toast('Tema copiado')}catch(_){toast('No se pudo copiar')}},
  async ntfytest(){if(!S.notif.ntfy.topic)return toast('Generá o escribí un tema primero');toast('Enviando prueba…');const ok=await sendNtfy({title:'✅ Prueba · '+S.brand,body:'Si ves este aviso, las notificaciones del portero funcionan.',prio:3});audit('NOTIFY','Prueba push · '+(ok?'enviada':'falló'));toast(ok?'Prueba enviada: revisá el celular suscripto':'No se pudo enviar: revisá internet y el servidor',4000)},
@@ -3203,7 +3390,7 @@ if('speechSynthesis' in window)speechSynthesis.onvoiceschanged=()=>{};
 (async()=>{
   await ensureDefaults();
   build();paintBrand();tick();go('home');
-  window.__cnb={S:()=>S,go,openDoor,log:()=>LOG,schedActive,isEnabled,notify,flushQ};
+  window.__cnb={S:()=>S,go,openDoor,log:()=>LOG,schedActive,isEnabled,notify,flushQ,eyeAR,blinkDet,fdist,FACE:()=>FACE,pkOK,derToRaw};
 })();
 })();
 </script>
