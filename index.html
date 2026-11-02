@@ -82,13 +82,10 @@ main{flex:1;min-height:0;position:relative}
 .tile[disabled]{opacity:.45}
 footer.ft{display:flex;gap:14px;align-items:center;justify-content:space-between;color:var(--mut);font-size:12.5px;flex-wrap:wrap}
 footer.ft a{color:var(--mut);text-decoration:none;border-bottom:1px dotted var(--line)}
-.guide{background:var(--card);border:1px dashed rgba(168,230,0,.4);border-radius:14px;padding:10px 14px;font-size:13px;color:var(--mut);flex-basis:100%;display:none}
 #v_admin .adm{flex:1;width:100%}
 .tile[disabled]{opacity:.38;pointer-events:none}
 .offb{display:flex;gap:12px;align-items:flex-start;padding:14px;border-radius:16px;border:1px solid rgba(230,194,0,.5);background:rgba(230,194,0,.08);color:var(--warn);margin-bottom:12px}
 .offb b{display:block;font-size:16px}.offb small{display:block;color:var(--mut);font-size:13px;margin-top:2px}
-.guide.on{display:block}
-.guide b{color:var(--y)}
 
 /* panels */
 .panel{margin:auto;width:min(560px,100%);max-height:100%;background:var(--card);border:1px solid var(--line);border-radius:28px;padding:22px;display:flex;flex-direction:column;gap:14px;overflow:auto}
@@ -132,8 +129,6 @@ footer.ft a{color:var(--mut);text-decoration:none;border-bottom:1px dotted var(-
 .rings .core{width:84px;height:84px;border-radius:50%;background:var(--y);color:var(--ink);display:grid;place-items:center;position:relative}
 .rings .core .ic{width:38px;height:38px}
 @keyframes ring{0%{transform:scale(.55);opacity:.8}100%{transform:scale(1.2);opacity:0}}
-.demo{border:1px dashed rgba(168,230,0,.4);border-radius:16px;padding:12px;width:100%}
-.demo small{color:var(--mut);display:block;margin-bottom:8px;font-size:12px}
 
 /* overlays */
 .ov{position:fixed;inset:0;z-index:50;background:rgba(7,8,6,.94);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;padding:24px;text-align:center}
@@ -198,6 +193,23 @@ pre{background:#070806;border:1px solid var(--line);border-radius:14px;padding:1
 }
 @media (max-height:640px) and (min-width:861px){
   .pad button{height:52px;font-size:22px}.hero{padding:18px}.hero h1{font-size:30px}
+}
+body{-webkit-touch-callout:none}
+.brand>div:last-child{min-width:0}
+@media (max-width:860px){
+  html,body{height:auto;min-height:100%}
+  body{overflow-y:auto;overflow-x:hidden}
+  #app{height:auto;min-height:100vh;min-height:100dvh}
+  main{flex:1 0 auto;min-height:0}
+  .view{position:relative;inset:auto}
+  .home{overflow:visible}
+  .panel{max-height:none}
+  .adm{height:auto}.adm .body{overflow:visible}
+  #fsBtn{display:none}
+  .brand small{display:none}
+  .clock b{font-size:22px}
+  .tile.main b{font-size:22px}
+  .pad button{height:68px}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -2549,8 +2561,9 @@ const DEF={
   pinLen:4, maxFails:5, lockSec:30, idleSec:45, relayMs:5000, relayUrl:'', relayToken:'', webhook:'', clientUrl:'',
   emNum:'911', trustName:'', trustNum:'',
   voice:{on:true,wake:'portero',wakeReq:false,uri:'',rate:1,tts:true},
-  chime:'campana', sound:true, demo:true, guide:true
+  chime:'campana', sound:true
 };
+if(LS.get('cnb_ver',0)!==2){['cnb_set','cnb_sec','cnb_users','cnb_areas','cnb_pass','cnb_log','cnb_fail'].forEach(k=>{try{localStorage.removeItem(k)}catch(_){}});LS.set('cnb_ver',2)}
 let S=Object.assign({},DEF,LS.get('cnb_set',{}));
 S.sched=JSON.parse(JSON.stringify(Object.assign({},DEF.sched,S.sched||{}))); S.voice=Object.assign({},DEF.voice,S.voice||{});
 let SEC=LS.get('cnb_sec',null);   // {admin,duress}
@@ -2564,15 +2577,15 @@ const saveLog=()=>LS.set('cnb_log',LOG.slice(-500));
 function audit(type,detail='',who='',crit=false){LOG.push({ts:now(),type,detail,who,crit});if(LOG.length>500)LOG=LOG.slice(-500);saveLog();}
 
 async function ensureDefaults(){
-  if(!SEC){SEC={admin:await sha('1234'),duress:await sha('9999')};}
-  if(!USERS){USERS=[{id:uid(),name:'Socio demo',role:'Socio',pin:await sha('2580'),nfc:'',on:true},{id:uid(),name:'Equipo Cannabismática',role:'Personal',pin:await sha('1111'),nfc:'',on:true}];}
+  if(!SEC){SEC={admin:await sha('1234'),duress:await sha('9999'),fAdmin:true,fDuress:true};}
+  if(!USERS){USERS=[];}
   if(!AREAS){AREAS=[
     {id:uid(),name:'Recepción',desc:'Información general',icon:'sofa',wa:'',chime:''},
     {id:uid(),name:'Consultas',desc:'Atención con profesionales de salud',icon:'stethoscope',wa:'',chime:''},
     {id:uid(),name:'Asesoría y trámites',desc:'Registro, REPROCANN y documentación',icon:'doc',wa:'',chime:''},
     {id:uid(),name:'Talleres',desc:'Capacitación y charlas',icon:'book',wa:'',chime:''},
     {id:uid(),name:'Cuota social',desc:'Administración y pagos',icon:'card',wa:'',chime:''}];}
-  if(!PASSES){PASSES=[{code:'246810',name:'Visita demo',exp:0,max:999,used:0,ts:now()}];}
+  if(!PASSES){PASSES=[];}
   save();
 }
 
@@ -2604,7 +2617,7 @@ function say(text){
 /* ====================== helpers UI ====================== */
 const toast=(t,ms=2600)=>{const e=$('#toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('on'),ms)};
 const ov=(html)=>{const o=$('#ov');if(html==null){o.classList.remove('on');o.innerHTML='';return}o.innerHTML=html;o.classList.add('on')};
-let VIEW='home',idleT=null,guideOn=true,nfcCtl=null;
+let VIEW='home',idleT=null,nfcCtl=null;
 function go(v,arg){
   if(VIEW==='nfc'&&v!=='nfc'&&nfcCtl){try{nfcCtl.abort()}catch(_){}}
   VIEW=v;$$('.view').forEach(x=>x.classList.remove('on'));
@@ -2642,7 +2655,7 @@ function paintBrand(){
   document.title='Portero Digital · '+S.brand;
 }
 let lastEn=null;
-function tick(){const d=new Date();$('#clk').textContent=pad(d.getHours())+':'+pad(d.getMinutes());const o=isEnabled();$('#stDot').className='dot '+(o?'on':'off');$('#stTx').textContent=o?'Portero habilitado':'Portero fuera de servicio';
+function tick(){const d=new Date();$('#clk').textContent=pad(d.getHours())+':'+pad(d.getMinutes());const o=isEnabled();$('#stDot').className='dot '+(o?'on':'off');$('#stTx').textContent=o?'Habilitado':'Fuera de servicio';
   if(lastEn!==null&&o!==lastEn&&$('#v_home'))build();lastEn=o}
 setInterval(tick,5000);
 
@@ -2712,10 +2725,8 @@ const R={
    el.innerHTML=`<div class="panel"><div class="call">
      <div class="rings"><i></i><i></i><i></i><div class="core">${ic('bell')}</div></div>
      <h2 id="cstate">Llamando a ${esc(a.name)}…</h2>
-     <p class="mut" id="csub">Ya avisamos que estás en la puerta. Aguardá un momento.</p>
-     <div class="row" id="cacts"></div>
-     ${S.demo?`<div class="demo"><small>MODO DEMO · simula la respuesta del personal (en producción llega por WhatsApp / panel)</small><div class="row">
-       <button class="btn sm" data-act="sim" data-r="att">Atiende</button><button class="btn sm y" data-act="sim" data-r="open">Abre la puerta</button><button class="btn sm" data-act="sim" data-r="no">No disponible</button></div></div>`:''}
+     <p class="mut" id="csub">El timbre sonó en la puerta. Aguardá a que te atiendan.</p>
+     <div class="row" id="cacts">${a.wa?waBtn(a):''}</div>
      <button class="back" data-act="cancelbell">${ic('x')} Cancelar</button></div></div>`;
  },
  pass(el){
@@ -2771,8 +2782,7 @@ function build(){
      <button class="tile sos" data-act="sos" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:14px;min-height:84px">${ic('sos')}<span><b>Emergencia</b><small>Llamar al ${esc(S.emNum||'911')} o a un contacto de confianza</small></span></button>
    </div>
    `;
-  $('#ft').innerHTML=svbBanner()+`<div class="guide ${guideOn&&S.guide?'on':''}" id="guide"><b>Guía de demo</b> · PIN de socio: <b>2580</b> · PIN equipo: <b>1111</b> · Pase de visita: <b>246810</b> · Panel admin: mantené presionado el logo 2 segundos (PIN <b>1234</b>).</div>    <span>Portero Digital SVB · v1.0 demo</span>
-    <span>${S.guide?'<a href="#" data-act="guide">Guía demo</a>':''}</span>`;
+  $('#ft').innerHTML=svbBanner()+`<span>Portero Digital SVB · v1.0</span>`;
   deskBar();
 }
 const svbBanner=()=>`<div class="svb"><div class="mk">S<i>V</i>B</div>
@@ -2786,25 +2796,23 @@ function deskBar(){
 
 /* ====================== timbre ====================== */
 let bellT=null,curArea=null;
+const waBtn=a=>`<a class="btn m" target="_blank" rel="noopener" href="https://wa.me/${String(a.wa).replace(/\D/g,'')}?text=${encodeURIComponent('Hola, estoy en la puerta de '+S.brand+' y busco '+a.name+'.')}">Avisar por WhatsApp</a>`;
 function stopBell(){clearTimeout(bellT);bellT=null;curArea=null}
 function ringArea(id){
   const a=AREAS.find(x=>x.id===id);if(!a)return;
   if(!isEnabled()){toast('Portero fuera de servicio');audit('OFFHOURS_DENIED','Timbre fuera de servicio');return}
   let who='';
   if(S.mode==='corp'){const v=$('#vname');who=v?v.value.trim():'Visita (reintento/voz)';if(v&&who.length<3){toast('Escribí tu nombre para continuar');v.focus();return}}
-  curArea=a;audit('BELL','Timbre → '+a.name+(who?' · visita: '+who:''),who);
+  curArea=a;audit('BELL','Timbre → '+a.name+(who?' · visita: '+who:''),who);webhook({event:'BELL',brand:S.brand,area:a.name,visitor:who,ts:now()});
   chime(a.chime||S.chime);say('Llamando a '+a.name+'. Aguardá un momento.');
   go('bell',id);
-  bellT=setTimeout(()=>bellState('none'),25000);
+  bellT=setTimeout(()=>bellState('none'),45000);
 }
-function bellState(r){
+function bellState(){
   const a=curArea;if(!a||VIEW!=='bell')return;clearTimeout(bellT);
   const st=$('#cstate'),sb=$('#csub'),ac=$('#cacts');if(!st)return;
-  if(r==='att'){st.textContent='Te están atendiendo';sb.textContent='Alguien del área '+a.name+' viene a recibirte.';say('Te están atendiendo. Aguardá un momento.')}
-  else if(r==='open'){openDoor('', 'Habilitado por personal ('+a.name+')');stopBell()}
-  else{st.textContent=r==='no'?'Ahora no hay nadie disponible':'Nadie respondió todavía';sb.textContent='Podés volver a intentar o avisar por WhatsApp.';say('Por ahora nadie respondió.');
-    const wa=a.wa?`<a class="btn m" target="_blank" rel="noopener" href="https://wa.me/${a.wa.replace(/\D/g,'')}?text=${encodeURIComponent('Hola, estoy en la puerta de '+S.brand+' y busco '+a.name+'.')}">Avisar por WhatsApp</a>`:'';
-    ac.innerHTML=`<button class="btn y" data-act="ring" data-id="${a.id}">Volver a tocar</button>${wa}`}
+  st.textContent='Todavía no hay respuesta';sb.textContent='Podés volver a tocar el timbre o avisar por WhatsApp.';say('Por ahora nadie respondió.');
+  ac.innerHTML=`<button class="btn y" data-act="ring" data-id="${a.id}">Volver a tocar</button>${a.wa?waBtn(a):''}`;
 }
 
 /* ====================== NFC ====================== */
@@ -2931,7 +2939,6 @@ function handleVoice(raw,fromText){
 /* ====================== acciones (delegación) ====================== */
 const A={
  home(){stopBell();go('home')},
- guide(b,e){e.preventDefault();guideOn=!guideOn;$('#guide').classList.toggle('on',guideOn)},
  fs(){desk('fullscreen');try{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}catch(_){}},
  dmin(){desk('minimize')},dclose(){desk('close')},
  bell(){if(!isEnabled())return toast('Portero fuera de servicio');go('bell')},
@@ -2949,7 +2956,6 @@ const A={
  kdel(){if(KP&&KP.buf){KP.buf=KP.buf.slice(0,-1);$$('#kdots i').forEach((e,i)=>e.classList.toggle('f',i<KP.buf.length))}},
  kok(){submitKP()},
  ring(b){ringArea(b.dataset.id)},
- sim(b){bellState(b.dataset.r)},
  cancelbell(){stopBell();go('bell')}
 };
 document.addEventListener('click',e=>{
@@ -2965,11 +2971,15 @@ document.addEventListener('keydown',e=>{
 });
 const scan={b:'',t:0};
 
-/* acceso oculto al admin: mantener presionado el logo 2 s o 5 toques rápidos */
-(()=>{let t=null,taps=[];const l=$('#logoBtn');
- const open=()=>{if(VIEW==='admin')return;ac();startKeypad({mode:'admin',guard:false,title:'Panel de ingeniería',sub:'PIN de administrador',max:8,min:4,auto:false})};
- l.addEventListener('pointerdown',()=>{t=setTimeout(open,2000)});['pointerup','pointerleave','pointercancel'].forEach(ev=>l.addEventListener(ev,()=>clearTimeout(t)));
- l.addEventListener('click',()=>{const n=now();taps=taps.filter(x=>n-x<2500);taps.push(n);if(taps.length>=5){taps=[];open()}});
+/* acceso oculto al panel: doble toque en una zona libre de la pantalla (no sobre botones ni paneles) */
+(()=>{let last=0,lx=0,ly=0;
+ const open=()=>{if(VIEW==='admin'||(VIEW==='keypad'&&KP&&KP.mode==='admin'))return;ac();startKeypad({mode:'admin',guard:false,title:'Panel de ingeniería',sub:'PIN de administrador',max:8,min:4,auto:false})};
+ document.addEventListener('click',e=>{
+   if(VIEW==='admin'||$('#ov').classList.contains('on'))return;
+   if(e.target.closest('button,a,input,select,textarea,label,.panel,.tile,.area,.svb,[data-act]'))return;
+   const n=now();
+   if(n-last<450&&Math.hypot(e.clientX-lx,e.clientY-ly)<48){last=0;open()}else{last=n;lx=e.clientX;ly=e.clientY}
+ });
 })();
 
 /* ====================== ADMIN ====================== */
@@ -2985,8 +2995,10 @@ function renderAdmin(el){
 function admBody(){const b=$('#admbody');if(!b)return;b.innerHTML=(AT[TAB]||(()=>''))();bindAdm(b);if(TAB==='pases')paintQRs()}
 const fld=(label,key,type='text',extra='')=>{const v=key.split('.').reduce((o,k)=>o&&o[k],S);return `<div><label>${label}</label><input data-bind="${key}" type="${type}" value="${esc(v)}" ${extra}></div>`};
 const sw=(label,key)=>{const v=key.split('.').reduce((o,k)=>o&&o[k],S);return `<div class="sw"><span>${label}</span><input type="checkbox" data-bind="${key}" ${v?'checked':''}></div>`};
+const setupItems=()=>[['Cambiar el PIN de administrador de fábrica',!SEC.fAdmin,'general'],['Cambiar el PIN de coacción de fábrica',!SEC.fDuress,'emerg'],['Cargar al menos una persona con PIN',USERS.some(u=>u.pin),'personas'],['Cargar el WhatsApp de aviso de las áreas',AREAS.some(a=>a.wa),'areas'],['Cargar el contacto de confianza para emergencias',!!S.trustNum,'emerg']];
 const AT={
- general(){return `<h3>General</h3><p class="sub">Marca, horarios y modo de operación.</p>
+ general(){const si=setupItems(),dn=si.filter(x=>x[1]).length;return `<h3>General</h3><p class="sub">Marca, horarios y modo de operación.</p>
+  ${dn<si.length?`<div class="card" style="border-color:rgba(168,230,0,.5)"><b>Puesta en marcha · ${dn} de ${si.length}</b>${si.map(x=>`<div class="row" style="justify-content:space-between;padding:6px 0"><span>${x[1]?'✔':'○'} ${x[0]}</span>${x[1]?'':x[2]==='general'?'<span class="mut">más abajo</span>':`<button class="btn sm" data-act="tab" data-t="${x[2]}">Ir</button>`}</div>`).join('')}</div>`:''}
   <div class="card"><label>Logo del cliente</label><div class="row"><div class="logo" style="width:72px;height:72px"><img alt="" src="${esc(S.logo||LOGO)}"></div>
    <label class="btn sm" style="margin:0">Cargar logo<input type="file" accept="image/*" id="logoFile" hidden></label><button class="btn sm ghost" data-act="logoreset">Restaurar original</button></div></div>
   <div class="grid2">${fld('Nombre','brand')}${fld('Subtítulo','sub')}${fld('Frase de bienvenida','tagline')}${fld('Dirección','addr')}</div>
@@ -2994,7 +3006,7 @@ const AT={
    <div><label>Horarios del portero</label><button class="btn sm" data-act="tab" data-t="horarios">${ic('cal')} Configurar horarios</button></div>
    ${fld('Largo del PIN (4 a 6)','pinLen','number','min="4" max="6"')}${fld('Volver al inicio por inactividad (seg)','idleSec','number','min="10" max="300"')}
    ${fld('Intentos antes de bloquear','maxFails','number','min="2" max="10"')}${fld('Segundos de bloqueo','lockSec','number','min="10" max="600"')}</div>
-  ${sw('Sonidos activados','sound')}${sw('Modo demo (simulador de respuesta del personal)','demo')}${sw('Mostrar “Guía demo” en la pantalla principal','guide')}
+  ${sw('Sonidos activados','sound')}
   <div class="card"><label>PIN de administrador</label><div class="row"><input id="newadm" type="password" inputmode="numeric" maxlength="8" placeholder="Nuevo PIN (4 a 8 dígitos)" style="flex:1"><button class="btn sm y" data-act="setadm">Cambiar</button></div></div>
   <div class="card"><p class="mut" style="margin:0">Sin cámaras ni biometría: el portero no captura imágenes ni datos biométricos de nadie. Solo se guarda el registro de eventos de este dispositivo.</p></div>`},
  horarios(){const order=[1,2,3,4,5,6,0],on=S.enMode==='sched',en=isEnabled();return `<h3>Horarios del portero</h3><p class="sub">Definí cuándo está habilitado. Fuera de horario se bloquean timbre, pases, NFC y voz; la Emergencia siempre funciona.</p>
@@ -3029,7 +3041,7 @@ const AT={
    <button class="btn y" style="margin-top:12px" data-act="padd">${ic('ticket')} Generar pase</button></div>
   ${PASSES.slice().reverse().map(p=>{const dead=(p.exp&&p.exp<now())||p.used>=p.max;return `<div class="card"><div class="row" style="align-items:flex-start;gap:16px"><div class="qr" data-qr="CNB-${p.code}"></div>
    <div style="flex:1;min-width:180px"><b style="font-size:20px">${esc(p.name)}</b><div style="font-size:30px;font-weight:800;letter-spacing:.12em;color:var(--y)">${p.code}</div>
-   <div class="mut">${p.exp?'Vence '+fdt(p.exp):'Sin vencimiento (demo)'} · usos ${p.used}/${p.max} · <span class="tag ${dead?'bad':'ok'}">${dead?'No vigente':'Vigente'}</span></div>
+   <div class="mut">${p.exp?'Vence '+fdt(p.exp):'Sin vencimiento'} · usos ${p.used}/${p.max} · <span class="tag ${dead?'bad':'ok'}">${dead?'No vigente':'Vigente'}</span></div>
    <div class="row" style="margin-top:10px"><a class="btn sm m" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent('Tu pase de visita para '+S.brand+': '+p.code+(p.exp?' (vence '+fdt(p.exp)+')':'')+'. Ingresalo en “Tengo un pase” en el portero.')}">Enviar por WhatsApp</a>
    <button class="btn sm bad" data-act="pdel" data-c="${p.code}">${ic('trash')}</button></div></div></div></div>`}).join('')}`},
  emerg(){return `<h3>Emergencias y PIN de coacción</h3><p class="sub">Configurá a quién se llama y cómo se avisa en silencio.</p>
@@ -3061,7 +3073,7 @@ const AT={
   <div class="card"><b>App móvil / PWA</b><p class="mut">Para instalarlo en tablet: servir este archivo por HTTPS junto con manifest y service worker, o empaquetarlo con Capacitor. En iOS: Compartir → Agregar a inicio.</p>
    <button class="btn sm y" data-act="pwa" ${PWA?'':'disabled'}>${PWA?'Instalar aplicación':'Instalación no disponible aquí'}</button></div>
   <div class="card"><p class="mut" style="margin:0">Sin cámaras no hace falta RTSP/ONVIF: la integración se limita a cerradura, timbre y avisos.</p></div>`},
- dev(){return `<h3>Soporte y desarrollador</h3><p class="sub">Datos de contacto para soporte, ajustes y nuevas funciones.</p>${svbBanner()}<div class="card"><b>Portero Digital SVB · v1.0 (demo)</b><p class="mut" style="margin:6px 0 0">Cliente: ${esc(S.brand)}. Sin cámaras ni biometría. Datos guardados solo en este dispositivo.</p></div>`},
+ dev(){return `<h3>Soporte y desarrollador</h3><p class="sub">Datos de contacto para soporte, ajustes y nuevas funciones.</p>${svbBanner()}<div class="card"><b>Portero Digital SVB · v1.0</b><p class="mut" style="margin:6px 0 0">Cliente: ${esc(S.brand)}. Sin cámaras ni biometría. Datos guardados solo en este dispositivo.</p></div>`},
  audit(){const rows=LOG.slice().reverse();return `<h3>Log de auditoría</h3><p class="sub">${LOG.length} eventos guardados en este dispositivo (máx. 500).</p>
   <div class="row" style="margin-bottom:10px"><button class="btn sm" data-act="exjson">${ic('dl')} JSON</button><button class="btn sm" data-act="excsv">${ic('dl')} CSV</button><button class="btn sm bad" data-act="clrlog" id="clrlog">${ic('trash')} Vaciar</button></div>
   <div style="overflow:auto;max-height:62vh"><table><thead><tr><th>Fecha</th><th>Evento</th><th>Detalle</th></tr></thead><tbody>
@@ -3097,7 +3109,7 @@ const ADM={
  tab(b){TAB=b.dataset.t;renderAdmin($('#v_admin'))},
  exitadm(){go('home')},
  logoreset(){S.logo='';save();build();paintBrand();admBody()},
- async setadm(){const v=$('#newadm').value.trim();if(!/^\d{4,8}$/.test(v))return toast('4 a 8 dígitos');SEC.admin=await sha(v);save();audit('CONFIG','PIN admin cambiado');$('#newadm').value='';toast('PIN de administrador actualizado')},
+ async setadm(){const v=$('#newadm').value.trim();if(!/^\d{4,8}$/.test(v))return toast('4 a 8 dígitos');SEC.admin=await sha(v);SEC.fAdmin=false;save();audit('CONFIG','PIN admin cambiado');$('#newadm').value='';toast('PIN de administrador actualizado')},
  async usetpin(b){const inp=b.closest('[data-u]').querySelector('[data-upin]');const v=inp.value.trim();if(v.length!==S.pinLen||!/^\d+$/.test(v))return toast('El PIN debe tener '+S.pinLen+' dígitos');
    const h=await sha(v);if(h===SEC.duress||h===SEC.admin&&false)return toast('Ese PIN no está disponible');if(USERS.some(u=>u.pin===h&&u.id!==b.dataset.id))return toast('Ese PIN ya está en uso');
    USERS.find(u=>u.id===b.dataset.id).pin=h;save();audit('CONFIG','PIN actualizado');inp.value='';toast('PIN guardado')},
@@ -3111,7 +3123,7 @@ const ADM={
    let code;do{code=String(Math.floor(100000+Math.random()*900000))}while(PASSES.some(p=>p.code===code));
    PASSES.push({code,name,exp:now()+m*60000,max,used:0,ts:now()});save();audit('PASS_CREATED',name+' · '+m+' min · '+max+' uso(s)');admBody()},
  pdel(b){PASSES=PASSES.filter(p=>p.code!==b.dataset.c);save();admBody()},
- async setduress(){const v=$('#newduress').value.trim();if(v.length!==S.pinLen||!/^\d+$/.test(v))return toast('Debe tener '+S.pinLen+' dígitos');const h=await sha(v);if(USERS.some(u=>u.pin===h))return toast('Coincide con un PIN normal: elegí otro');SEC.duress=h;save();audit('CONFIG','PIN de coacción actualizado');$('#newduress').value='';toast('PIN de coacción guardado')},
+ async setduress(){const v=$('#newduress').value.trim();if(v.length!==S.pinLen||!/^\d+$/.test(v))return toast('Debe tener '+S.pinLen+' dígitos');const h=await sha(v);if(USERS.some(u=>u.pin===h))return toast('Coincide con un PIN normal: elegí otro');SEC.duress=h;SEC.fDuress=false;save();audit('CONFIG','PIN de coacción actualizado');$('#newduress').value='';toast('PIN de coacción guardado')},
  testvoice(){say('Hola, soy el asistente del portero de '+S.brand+'. ¿En qué te puedo ayudar?')},
  testrelay(){audit('CONFIG','Prueba de relé '+S.relayMs+' ms');fireRelay(S.relayMs,false);sfx.unlock();toast('Pulso de relé enviado ('+S.relayMs+' ms)')},
  async serial(){if(!('serial' in navigator))return toast('Web Serial no disponible (usar Chrome/Edge o la app de escritorio)');
